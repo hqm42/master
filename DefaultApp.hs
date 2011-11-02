@@ -2,9 +2,9 @@ module DefaultApp where
 
 import qualified Data.ByteString.Lazy.Char8 as L
 
-defaultJSApp :: String -> String
-defaultJSApp js = "<html>\n<head>\n<script type=\"text/javascript\">\nfunction init() {\n"
-          ++ js
+defaultJSApp :: String -> String -> String
+defaultJSApp jsStat jsDyn = "<html>\n<head>\n<script type=\"text/javascript\">\n" ++ jsStat ++ "\nfunction init() {\n"
+          ++ jsDyn
           ++ "\n};\n</script>\n</head>\n<body onload=\"init()\">\n</body>\n</html>"
 
 defaultHTMLApp :: String -> String

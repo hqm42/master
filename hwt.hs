@@ -1,30 +1,18 @@
 {-# LANGUAGE NoMonomorphismRestriction #-}
-{-# LANGUAGE OverloadedStrings #-}
 module HWT where
 
-import Network.Wai
-import Network.Wai.Handler.Warp (run)
-import Network.HTTP.Types (statusOK)
-import qualified Data.ByteString.Lazy.Char8 as L
-import Data.ByteString.Char8 (unpack)
-import qualified Data.Text.Lazy as T
-import Control.Monad.Trans (liftIO)
+import Network.Wai (Request)
 
 import DefaultApp
+import Server
 
 main :: IO ()
-main = do
-  run 8080 $ myApp
+main = runServer myApp
 
-myApp :: Application
-myApp req = do
-  liftIO $ putStrLn $ show $ pathInfo req
-  return $ responseLBS status headers (L.pack $ jsApp)
+myApp :: Request -> String
+myApp _req = jsApp
     where
-      status = statusOK
-      headers = [("Content-Type", "text/html")]
-      init = (unJS simpleDOM 0)
-      jsApp = defaultJSApp init
+      jsApp = defaultJSApp $ unJS simpleDOM 0
       htmlApp = defaultHTMLApp $ unHTML simpleDOM
 
 
