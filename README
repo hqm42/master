@@ -1,4 +1,4 @@
-cabal install warp
-localhost:8080
+cabal install yesod MissingH
 
-...
+runhaskell Hallo.hs
+localhost:8080
