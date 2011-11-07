@@ -28,7 +28,7 @@ function getModel(elem) {
 }
 
 function setModel(elem,model) {
-  newContent = document.createTextNode(xmlhttp.responseText);
+  newContent = document.createTextNode(model);
   elem.replaceChild(newContent, elem.firstChild);
 }
 
@@ -42,8 +42,7 @@ function mkAction(target,actionName) {
       xmlhttp.open("POST","action/" + actionName,true);
       xmlhttp.onreadystatechange=function() {
         if (xmlhttp.readyState!=4) {
-          newContent = document.createTextNode(xmlhttp.responseText);
-          target.replaceChild(newContent, target.firstChild);
+          setModel(target,xmlhttp.responseText)
         };
         xmlhttp.setRequestHeader('Content-Type','text/plain');
      }
