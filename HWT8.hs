@@ -108,7 +108,7 @@ renderJS :: JS Element -> [JS VarDef] -> [(String,String)] -> String
 renderJS root defs models = join "\n" $ defs' ++ models' ++ [root']
   where
     defs' = map (\(JS v r) -> concat ["var ",r," = ",v,";"]) defs
-    models' = map (\(r,m) -> concat ["setModel(",r,",'",m,"');"]) models
+    models' = map (\(r,m) -> concat ["setModel(",r,",",show m,");"]) models
     root' = concat ["document.body.appendChild(",(reference root),");"]
 
 runHWTApp :: HWT Elem -> IO ()
