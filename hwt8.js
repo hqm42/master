@@ -1,3 +1,6 @@
+actions = {} // global FIXME
+models = {}  // global FIXME
+
 function mkContainer(/*children*/) {
   var d = document.createElement('div');
   for (var i=0, len=arguments.length; i<len; i++) {
@@ -8,33 +11,14 @@ function mkContainer(/*children*/) {
 
 function mkLabel(text) {
   var l = document.createElement('span');
-  var t = document.createTextNode(text);
-  l.appendChild(t);
   return l;
 }
 
 function mkButton(text,action) {
   var b = document.createElement('button');
-  var t = document.createTextNode(text);
-  b.appendChild(t);
   b.setAttribute('onclick', 'actions[\'' + action + '\']()');
   return b;
 }
-
-// helper begin
-
-function getModel(elem) {
-  return elem.firstChild.textContent
-}
-
-function setModel(elem,model) {
-  newContent = document.createTextNode(model);
-  elem.replaceChild(newContent, elem.firstChild);
-}
-
-// helper end
-
-actions = {} // global FIXME
 
 function mkAction(target,actionName) {
    var a = function() {
@@ -51,3 +35,21 @@ function mkAction(target,actionName) {
   actions[actionName] = a;
   return actionName
 }
+
+// helper begin
+
+function getModel(elem) {
+  return elem.firstChild.textContent
+}
+
+function setModel(elem,model) {
+  var newContent = document.createTextNode(model);
+  if (elem.childNodes && elem.childNodes.length > 0) {
+    elem.replaceChild(newContent, elem.firstChild);
+  } else {
+    elem.appendChild(newContent);
+  }
+  models[elem] = model;
+}
+
+// helper end
