@@ -44,8 +44,8 @@ function mkAction(target,actionName) {
         if (xmlhttp.readyState!=4) {
           setModel(target,xmlhttp.responseText)
         };
-        xmlhttp.setRequestHeader('Content-Type','text/plain');
      }
+     xmlhttp.setRequestHeader('Content-Type','text/plain');
      xmlhttp.send(getModel(target));
   }
   actions[actionName] = a;
