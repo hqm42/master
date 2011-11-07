@@ -21,17 +21,8 @@ import Network.Wai.Handler.Warp (run )
 import Data.Enumerator.List (consume)
 
 import DefaultApp
-import Server
 
-data HWT8 = HWT8 [(String,(String->String))]
-
--- BEGIN Hello World EXAMPLE
-ex = do
-  l <- label "Hallo"
-  a <- action l (++ "?!")
-  b <- button "!!!" a
-  container [l,b]
--- END Hello World EXAMPLE
+data HWT8 = HWT8 HWTApp
 
 exEval = runStateT ex (JSS 0 [] [])
 
@@ -46,9 +37,16 @@ data JSS = JSS {
     actions :: [(String,(String->String))]
   } -- deriving Show -- actions breaks Show
 
+data HWTApp = HWTApp {
+    html :: String, -- init page
+    handlerFunctions :: [(String,(String->String))]
+  }
+
 data VarDef
 data Element
 data Action
+
+type Elem = JS Element
 
 type HWT a = StateT JSS IO a
 
@@ -95,13 +93,18 @@ renderJS root defs = join "\n" $ defs' ++ [root']
     defs' = map (\(JS v r) -> concat ["var ",r," = ",v,";"]) defs
     root' = concat ["document.body.appendChild(",(reference root),");"]
 
-main = do
-  (_,jss) <- exEval
-  let
-    as = actions jss
-  app <- toWaiApp (HWT8 as)
-  run 8080 $ app
+main = runHWTApp ex
 
+runHWTApp :: HWT Elem -> IO ()
+runHWTApp e = do
+  staticJS <- liftIO $ readFile "hwt8.js"
+  (root,jss) <- runStateT ex (JSS 0 [] [])
+  let
+    body = defaultJSApp staticJS (renderJS root (varDefs jss))
+    as = actions jss
+  app <- toWaiApp $ HWT8 $ HWTApp body as
+  run 8080 $ app
+  
 -- Yesod routes
 
 mkYesod "HWT8" [parseRoutes|
@@ -114,17 +117,12 @@ instance Yesod HWT8 where
 
 getHomeR :: Handler RepHtml
 getHomeR = do
-  staticJS <- liftIO $ readFile "hwt8.js"
-  (root,jss) <- liftIO $ exEval
-  let
-    body = defaultJSApp staticJS (renderJS root (varDefs jss))
-    status = statusOK
-    headers = [("Content-Type", "text/html")]
-  return $ RepHtml $ toContent body
+  HWT8 (HWTApp html _) <- getYesod
+  return $ RepHtml $ toContent html
 
 postActionR :: String -> Handler RepPlain
 postActionR actionIndex = do
-  HWT8 as <- getYesod
+  HWT8 (HWTApp _ as) <- getYesod
   case lookup actionIndex as of
     (Just f) -> do bss <- lift consume
                    return $ RepPlain $ toContent $ f $ L.unpack $ L.fromChunks bss
