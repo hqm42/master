@@ -21,19 +21,33 @@ function mkButton(text,action) {
   return b;
 }
 
+// helper begin
+
+function getModel(elem) {
+  return elem.firstChild.textContent
+}
+
+function setModel(elem,model) {
+  newContent = document.createTextNode(xmlhttp.responseText);
+  elem.replaceChild(newContent, elem.firstChild);
+}
+
+// helper end
+
 actions = {} // global FIXME
 
 function mkAction(target,actionName) {
    var a = function() {
       var xmlhttp = new XMLHttpRequest();
-      xmlhttp.open("GET",actionName,true);
+      xmlhttp.open("POST","action/" + actionName,true);
       xmlhttp.onreadystatechange=function() {
         if (xmlhttp.readyState!=4) {
-          newContent = document.createTextNode(xmlhttp.responseText)
+          newContent = document.createTextNode(xmlhttp.responseText);
           target.replaceChild(newContent, target.firstChild);
-        }
+        };
+        xmlhttp.setRequestHeader('Content-Type','text/plain');
      }
-     xmlhttp.send(null);
+     xmlhttp.send(getModel(target));
   }
   actions[actionName] = a;
   return actionName

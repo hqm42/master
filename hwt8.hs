@@ -1,17 +1,39 @@
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+
 module HWT8 where
 
 import Network.Wai (Request)
 import Control.Monad.State (StateT(..), gets, modify)
 import Data.String.Utils (join)
+import qualified Data.ByteString.Lazy.Char8 as L
+import Network.HTTP.Types (statusOK)
+import Network.Wai
+
+import Yesod
+
+import Network.Wai
+import Network.Wai.Handler.Warp (run )
+
+import Data.Enumerator.List (consume)
 
 import DefaultApp
 import Server
 
+data HWT8 = HWT8 [(String,(String->String))]
+
+-- BEGIN Hello World EXAMPLE
 ex = do
   l <- label "Hallo"
   a <- action l (++ "?!")
   b <- button "!!!" a
   container [l,b]
+-- END Hello World EXAMPLE
+
+exEval = runStateT ex (JSS 0 [] [])
 
 data JS a = JS {
     value :: String,
@@ -20,8 +42,9 @@ data JS a = JS {
 
 data JSS = JSS {
     nextId :: Int,
-    varDefs :: [JS VarDef]
-  } deriving Show
+    varDefs :: [JS VarDef],
+    actions :: [(String,(String->String))]
+  } -- deriving Show -- actions breaks Show
 
 data VarDef
 data Element
@@ -39,7 +62,13 @@ button :: String -> (JS Action) -> HWT (JS Element)
 button s a = addDefReturn ("mkButton('" ++ s ++ "'," ++ (reference a) ++ ")") "b"
 
 action :: (JS Element) -> (String -> String) -> HWT (JS Action)
-action e f = addDefReturn ("mkAction(" ++ (reference e) ++ "," ++ "'ACTIONNAME'" ++ ")") "a"
+action e f = do
+  i <- genId "a"
+  let
+    res = JS ("mkAction(" ++ (reference e) ++ ",'" ++ i ++ "')") i
+  defVar [toVarDef res]
+  modify (\s -> s{actions = (i,f) : (actions s)})
+  return res
 
 toVarDef :: JS a -> JS VarDef
 toVarDef (JS v r) = JS v r
@@ -66,10 +95,38 @@ renderJS root defs = join "\n" $ defs' ++ [root']
     defs' = map (\(JS v r) -> concat ["var ",r," = ",v,";"]) defs
     root' = concat ["document.body.appendChild(",(reference root),");"]
 
-main :: IO ()
 main = do
-  staticJS <- readFile "hwt8.js"
-  s <- (runStateT ex (JSS 0 []))
+  (_,jss) <- exEval
   let
-    (root,jss) = s
-  runServer $ \_req -> defaultJSApp staticJS (renderJS root (varDefs jss))
+    as = actions jss
+  app <- toWaiApp (HWT8 as)
+  run 8080 $ app
+
+-- Yesod routes
+
+mkYesod "HWT8" [parseRoutes|
+/ HomeR GET
+/action/#String ActionR POST
+|]
+
+instance Yesod HWT8 where
+    approot _ = ""
+
+getHomeR :: Handler RepHtml
+getHomeR = do
+  staticJS <- liftIO $ readFile "hwt8.js"
+  (root,jss) <- liftIO $ exEval
+  let
+    body = defaultJSApp staticJS (renderJS root (varDefs jss))
+    status = statusOK
+    headers = [("Content-Type", "text/html")]
+  return $ RepHtml $ toContent body
+
+postActionR :: String -> Handler RepPlain
+postActionR actionIndex = do
+  HWT8 as <- getYesod
+  case lookup actionIndex as of
+    (Just f) -> do bss <- lift consume
+                   return $ RepPlain $ toContent $ f $ L.unpack $ L.fromChunks bss
+    Nothing -> return $ RepPlain $ toContent ("ERROR" :: String)
+  -- return $ RepPlain $ toContent actionIndex
