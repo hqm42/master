@@ -24,8 +24,6 @@ import DefaultApp
 
 data HWT8 = HWT8 HWTApp
 
-exEval = runStateT ex (JSS 0 [] [])
-
 data JS a = JS {
     value :: String,
     reference :: String
@@ -93,12 +91,10 @@ renderJS root defs = join "\n" $ defs' ++ [root']
     defs' = map (\(JS v r) -> concat ["var ",r," = ",v,";"]) defs
     root' = concat ["document.body.appendChild(",(reference root),");"]
 
-main = runHWTApp ex
-
 runHWTApp :: HWT Elem -> IO ()
 runHWTApp e = do
   staticJS <- liftIO $ readFile "hwt8.js"
-  (root,jss) <- runStateT ex (JSS 0 [] [])
+  (root,jss) <- runStateT e (JSS 0 [] [])
   let
     body = defaultJSApp staticJS (renderJS root (varDefs jss))
     as = actions jss
