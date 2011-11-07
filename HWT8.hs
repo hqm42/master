@@ -47,7 +47,7 @@ data HWTApp = HWTApp {
 
 data ActionH = ActionH {
   modelRef :: String,
-  f :: (String -> String)
+  f :: (String -> IO String)
 }
 
 data VarDef
@@ -71,7 +71,7 @@ button s a = do
   b <- addDef ("mkButton('" ++ s ++ "'," ++ (reference a) ++ ")") "b"
   addModel b s
 
-action :: (JS Element) -> (String -> String) -> HWT (JS Action)
+action :: (JS Element) -> (String -> IO String) -> HWT (JS Action)
 action e f = do
   i <- genId "a"
   let
@@ -158,8 +158,7 @@ postActionR actionIndex = do
   case lookup actionIndex as of
     (Just (ActionH mr f)) -> do
       bss <- lift consume
-      let
-        newModel = f $ L.unpack $ L.fromChunks bss
+      newModel <- liftIO $ f $ L.unpack $ L.fromChunks bss
       liftIO $ atomically $ do
         updateModel models sk mr newModel
       return $ RepPlain $ toContent newModel
