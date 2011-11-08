@@ -63,13 +63,18 @@ container cs = addDef ("mkContainer(" ++ (join "," (map reference cs)) ++ ")") "
 
 label :: String -> HWT (JS Element)
 label s = do
-  l <- addDef ("mkLabel('" ++ s ++ "')") "l"
+  l <- addDef "mkLabel()" "l"
   addModel l s
 
 button :: String -> (JS Action) -> HWT (JS Element)
 button s a = do
-  b <- addDef ("mkButton('" ++ s ++ "'," ++ (reference a) ++ ")") "b"
+  b <- addDef ("mkButton(" ++ (reference a) ++ ")") "b"
   addModel b s
+
+textField :: String -> HWT (JS Element)
+textField s = do
+  t <- addDef "mkTextField()" "t"
+  addModel t s
 
 action :: (JS Element) -> (String -> IO String) -> HWT (JS Action)
 action e f = do
@@ -107,8 +112,8 @@ addModel e m = do
 renderJS :: JS Element -> [JS VarDef] -> [(String,String)] -> String
 renderJS root defs models = join "\n" $ defs' ++ models' ++ [root']
   where
-    defs' = map (\(JS v r) -> concat ["var ",r," = ",v,";"]) defs
-    models' = map (\(r,m) -> concat ["setModel(",r,",",show m,");"]) models
+    defs' = map (\(JS v r) -> concat ["var ",r," = ",v,";\n",r,".name = '",r,"';"]) defs
+    models' = map (\(r,m) -> concat [r,".hwtSetModel(",show m,");"]) models
     root' = concat ["document.body.appendChild(",(reference root),");"]
 
 runHWTApp :: HWT Elem -> IO ()
@@ -126,6 +131,7 @@ runHWTApp e = do
 mkYesod "HWT8" [parseRoutes|
 / HomeR GET
 /action/#String ActionR POST
+/model/#String ModelR POST
 |]
 
 instance Yesod HWT8 where
@@ -148,7 +154,6 @@ getHomeR = do
         Just modelsT -> readTVar modelsT
   let
     body = defaultJSApp staticJS (renderJS root (varDefs jss) models)
-  liftIO $ putStrLn $ "TVar models: " ++ (show models)
   return $ RepHtml $ toContent body
 
 postActionR :: String -> Handler RepPlain
@@ -157,23 +162,31 @@ postActionR actionIndex = do
   HWT8 (HWTApp _ as models) <- getYesod
   case lookup actionIndex as of
     (Just (ActionH mr f)) -> do
-      bss <- lift consume
-      newModel <- liftIO $ f $ L.unpack $ L.fromChunks bss
+      postData <- lift consume
+      newModel <- liftIO $ f $ L.unpack $ L.fromChunks postData
       liftIO $ atomically $ do
         updateModel models sk mr newModel
       return $ RepPlain $ toContent newModel
-    Nothing -> return $ RepPlain $ toContent ("ERROR" :: String)
+    Nothing -> invalidArgs [T.pack $ "ERROR: Action '" ++ actionIndex ++ "' not found!"]
+
+postModelR :: String -> Handler RepPlain
+postModelR modelIndex = do
+  postData <- lift consume
+  let
+    newModel = L.unpack $ L.fromChunks postData
+  sk <- getSessionKey
+  HWT8 (HWTApp _ _ models) <- getYesod
+  liftIO $ atomically $ do updateModel models sk modelIndex newModel
+  return $ RepPlain $ toContent ("OK" :: String)
 
 updateModel :: TVar [(String, TVar [(String,String)])] -> String -> String -> String -> STM ()
 updateModel models sk mr newModel = do
   ms <- readTVar models
   case lookup sk ms of
-    Nothing -> undefined -- TODO FIXME
+    Nothing -> undefined -- TODO FIXME : Session not found
     Just msT -> do
       ms' <- readTVar msT
       writeTVar msT $ (mr,newModel) : [p | p@(r,_) <- ms', r /= mr]
-      
-  
 
 -- Yesod client session
 

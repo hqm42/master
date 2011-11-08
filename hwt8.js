@@ -1,6 +1,3 @@
-actions = {} // global FIXME
-models = {}  // global FIXME
-
 function mkContainer(/*children*/) {
   var d = document.createElement('div');
   for (var i=0, len=arguments.length; i<len; i++) {
@@ -9,15 +6,26 @@ function mkContainer(/*children*/) {
   return d;
 } 
 
-function mkLabel(text) {
+function mkLabel() {
   var l = document.createElement('span');
+  textContentModel(l);
   return l;
 }
 
-function mkButton(text,action) {
+function mkButton(action) {
   var b = document.createElement('button');
-  b.setAttribute('onclick', 'actions[\'' + action + '\']()');
+  b.hwtAction = action;
+  b.setAttribute('onclick', 'this.hwtAction()');
+  textContentModel(b);
   return b;
+}
+
+function mkTextField(modelName) {
+  var t = document.createElement('input');
+  t.type = 'text';
+  valueModel(t);
+  userUpdateableModel(t);
+  return t;
 }
 
 function mkAction(target,actionName) {
@@ -26,17 +34,41 @@ function mkAction(target,actionName) {
       xmlhttp.open("POST","action/" + actionName,true);
       xmlhttp.onreadystatechange=function() {
         if (xmlhttp.readyState!=4) {
-          setModel(target,xmlhttp.responseText)
+          target.hwtSetModel(xmlhttp.responseText)
         };
      }
      xmlhttp.setRequestHeader('Content-Type','text/plain');
-     xmlhttp.send(getModel(target));
+     xmlhttp.send(target.hwtGetModel());
   }
-  actions[actionName] = a;
-  return actionName
+  return a;
 }
 
 // helper begin
+
+function userUpdateableModel(elem) {
+  elem.hwtModelUpdate = function() {
+    var xmlhttp = new XMLHttpRequest();
+    xmlhttp.open("POST","model/" + elem.name ,true);
+    xmlhttp.onreadystatechange=function() {
+      if (xmlhttp.readyState!=4) {
+        // alert(xmlhttp.responseText);
+      };
+   }
+   xmlhttp.setRequestHeader('Content-Type','text/plain');
+   xmlhttp.send(elem.hwtGetModel());
+  };
+  elem.setAttribute('onkeyup','this.hwtModelUpdate()');
+}
+
+function textContentModel(elem) {
+  elem.hwtSetModel = function(model){setModel(elem,model)};
+  elem.hwtGetModel = function(){getModel(elem)};
+}
+
+function valueModel(elem) {
+  elem.hwtSetModel = function(model){elem.value = model};
+  elem.hwtGetModel = function(){return elem.value};
+}
 
 function getModel(elem) {
   return elem.firstChild.textContent
@@ -49,7 +81,6 @@ function setModel(elem,model) {
   } else {
     elem.appendChild(newContent);
   }
-  models[elem] = model;
 }
 
 // helper end
