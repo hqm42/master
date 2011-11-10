@@ -1,0 +1,27 @@
+Name:                hwt
+Version:             0.1
+Synopsis:            Hwt
+License:             AllRightsReserved
+License-file:        LICENSE
+Author:              Robert Steuck
+Maintainer:          robert.steuck@gmail.com
+Category:            Application
+Build-type:          Simple
+
+Cabal-version:       >=1.2
+
+Executable hwt
+  Main-is:           Hallo.hs
+
+  Build-depends:    haskell2010 >= 1.0 && < 2.0,
+                    yesod == 0.9.2,
+                    bytestring,
+                    enumerator,
+                    warp,
+                    wai,
+                    stm,
+                    http-types,
+                    text,
+                    mtl,
+                    MissingH
+
