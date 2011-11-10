@@ -50,9 +50,9 @@ data ActionH = ActionH {
   f :: (String -> IO String)
 }
 
-data VarDef
-data Element
-data Action
+data VarDef = VarDef 
+data Element = Element
+data Action = Action
 
 type Elem = JS Element
 

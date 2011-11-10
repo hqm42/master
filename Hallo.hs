@@ -1,4 +1,3 @@
-module Hallo where
 
 import HWT8
 
