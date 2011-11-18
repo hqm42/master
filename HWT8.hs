@@ -17,6 +17,7 @@ import Control.Concurrent.STM.TVar
 
 
 import Yesod
+import Yesod.Static
 
 import Network.Wai
 import Network.Wai.Handler.Warp (run )
@@ -25,65 +26,54 @@ import Data.Enumerator.List (consume)
 
 import DefaultApp
 
-data HWT8 = HWT8 HWTApp
-
 data JS a = JS {
-    value :: String,
-    reference :: String
+    jsValue :: String,
+    jsReference :: String
   } deriving Show
 
 data JSS = JSS {
     nextId :: Int,
     varDefs :: [JS VarDef],
-    actions :: [(String,ActionH)],
     initialModels :: [(String,String)]
-  } -- deriving Show -- actions breaks Show
+  } -- deriving Show
 
 data HWTApp = HWTApp {
-    static :: (String,JS Element,JSS), -- init page
-    handlerFunctions :: [(String,ActionH)],
-    models :: TVar [(String, TVar [(String,String)])] -- [(sessionKey,[(ref,model)])]
-  }
-
-data ActionH = ActionH {
-  modelRef :: String,
-  f :: (String -> IO String)
+  getStaticFiles :: Static,
+  static :: (JS Element,JSS), -- init page
+  models :: TVar [(String, TVar [(String,String)])] -- [(sessionKey,[(ref,model)])]
 }
 
 data VarDef = VarDef 
 data Element = Element
-data Action = Action
-
-type Elem = JS Element
+data Model = Model
+data Value = Value
 
 type HWT a = StateT JSS IO a
 
-container :: [JS Element] -> HWT (JS Element)
-container cs = addDef ("mkContainer(" ++ (join "," (map reference cs)) ++ ")") "c"
+value :: String -> HWT (JS Value)
+value c = addDef ("new hwt.Value('" ++ c ++ "')") "v"
 
-label :: String -> HWT (JS Element)
+readModel :: JS Value -> HWT (JS Model)
+readModel v = addDef ("new hwt.ReadModel(" ++ (jsReference v) ++ ")") "rm"
+
+readWriteModel :: JS Value -> HWT (JS Model)
+readWriteModel v = addDef ("new hwt.ReadWriteModel(" ++ jsReference v ++ ")") "rwm"
+
+label :: JS Model -> HWT (JS Element)
 label s = do
-  l <- addDef "mkLabel()" "l"
-  addModel l s
+  addDef (concat ["new hwt.widgets.Label(",jsReference s,")"]) "l"
 
-button :: String -> (JS Action) -> HWT (JS Element)
-button s a = do
-  b <- addDef ("mkButton(" ++ (reference a) ++ ")") "b"
-  addModel b s
-
-textField :: String -> HWT (JS Element)
-textField s = do
-  t <- addDef "mkTextField()" "t"
-  addModel t s
-
-action :: (JS Element) -> (String -> IO String) -> HWT (JS Action)
-action e f = do
-  i <- genId "a"
+textField :: JS Model -> Maybe (JS Model) ->  Maybe (JS Model) -> HWT (JS Element)
+textField s opt_dis opt_class = do
   let
-    res = JS ("mkAction(" ++ (reference e) ++ ",'" ++ i ++ "')") i
-  defVar [toVarDef res]
-  modify (\s -> s{actions = (i,(ActionH (reference e) f)) : (actions s)})
-  return res
+    dis = case opt_dis of
+      Nothing -> ",null"
+      Just d -> "," ++ jsReference d
+    clas = case opt_class of
+      Nothing -> ",null"
+      Just c -> "," ++ jsReference c
+    opts = dis ++ clas
+  addDef ("new hwt.widgets.TextField(" ++ jsReference s ++ opts ++ ")") "t"
 
 toVarDef :: JS a -> JS VarDef
 toVarDef (JS v r) = JS v r
@@ -104,43 +94,35 @@ addDef c t = do
   defVar [toVarDef res]
   return $ res
 
-addModel :: JS Element -> String -> HWT (JS Element)
-addModel e m = do
-  modify (\s -> s{initialModels = ((reference e),m) : (initialModels s)})
-  return e
-
 renderJS :: JS Element -> [JS VarDef] -> [(String,String)] -> String
-renderJS root defs models = join "\n" $ defs' ++ models' ++ [root']
+renderJS root defs models = join "\n" $ defs' ++ [root']
   where
-    defs' = map (\(JS v r) -> concat ["var ",r," = ",v,";\n",r,".name = '",r,"';"]) defs
-    models' = map (\(r,m) -> concat [r,".hwtSetModel(",show m,");"]) models
-    root' = concat ["document.body.appendChild(",(reference root),");"]
+    defs' = map (\(JS v r) -> concat ["var ",r," = ",v,";"]) defs
+    root' = concat ["document.body.appendChild(",(jsReference root),".domNode);"]
 
-runHWTApp :: HWT Elem -> IO ()
+runHWTApp :: HWT (JS Element) -> IO ()
 runHWTApp e = do
-  staticJS <- liftIO $ readFile "hwt8.js"
-  (root,jss) <- runStateT e (JSS 0 [] [] [])
+  (root,jss) <- runStateT e (JSS 0 [] [])
   ms <- newTVarIO []
-  let
-    as = actions jss
-  app <- toWaiApp $ HWT8 $ HWTApp (staticJS,root,jss) as ms
+  staticFiles <- staticDevel "static"
+  app <- toWaiApp $ HWTApp staticFiles (root,jss) ms
   run 8080 $ app
   
 -- Yesod routes
 
-mkYesod "HWT8" [parseRoutes|
+mkYesod "HWTApp" [parseRoutes|
 / HomeR GET
-/action/#String ActionR POST
 /model/#String ModelR POST
+/static StaticR Static getStaticFiles
 |]
 
-instance Yesod HWT8 where
+instance Yesod HWTApp where
     approot _ = ""
 
 getHomeR :: Handler RepHtml
 getHomeR = do
   sk <- getSessionKey
-  HWT8 (HWTApp (staticJS,root,jss) _ ms) <- getYesod
+  HWTApp _ (root,jss) ms <- getYesod
   models <- liftIO $ atomically $
     do
       ms' <- readTVar ms
@@ -153,21 +135,8 @@ getHomeR = do
           return im
         Just modelsT -> readTVar modelsT
   let
-    body = defaultJSApp staticJS (renderJS root (varDefs jss) models)
+    body = defaultJSApp (renderJS root (varDefs jss) models)
   return $ RepHtml $ toContent body
-
-postActionR :: String -> Handler RepPlain
-postActionR actionIndex = do
-  sk <- getSessionKey
-  HWT8 (HWTApp _ as models) <- getYesod
-  case lookup actionIndex as of
-    (Just (ActionH mr f)) -> do
-      postData <- lift consume
-      newModel <- liftIO $ f $ L.unpack $ L.fromChunks postData
-      liftIO $ atomically $ do
-        updateModel models sk mr newModel
-      return $ RepPlain $ toContent newModel
-    Nothing -> invalidArgs [T.pack $ "ERROR: Action '" ++ actionIndex ++ "' not found!"]
 
 postModelR :: String -> Handler RepPlain
 postModelR modelIndex = do
@@ -175,7 +144,7 @@ postModelR modelIndex = do
   let
     newModel = L.unpack $ L.fromChunks postData
   sk <- getSessionKey
-  HWT8 (HWTApp _ _ models) <- getYesod
+  HWTApp _ _ models <- getYesod
   liftIO $ atomically $ do updateModel models sk modelIndex newModel
   return $ RepPlain $ toContent ("OK" :: String)
 

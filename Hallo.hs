@@ -2,7 +2,8 @@
 import HWT8
 
 main = runHWTApp $ do
-  l <- label "Hallo"
-  a <- action l $ (\s -> return $ s ++ " HALLO")
-  b <- button "!!!" a
-  container [l,b]
+  v1 <- value "Hallo"
+  m1 <- readModel v1
+  m2 <- readWriteModel v1
+  t1 <- textField m2 Nothing Nothing
+  label m1
