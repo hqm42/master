@@ -1,0 +1,33 @@
+<html>
+<head>
+<script src='static/closure-library/closure/goog/base.js'></script>
+<script src='static/hwt9.js'></script>
+<script>
+function init() {
+  v1 = new hwt.Value("Hallo");
+  v2 = new hwt.Value(false);
+  var m1 = new hwt.ReadModel(v1);
+  var m2 = new hwt.ReadWriteModel(v1);
+  var m3 = new hwt.ReadModel(v2);
+  var m4 = new hwt.ReadWriteModel(v2);
+  var l1 = new hwt.widgets.Label(m1,m1);
+  var t1 = new hwt.widgets.TextField(m2,m3);
+  var c1 = new hwt.widgets.Checkbox(m4);
+  var b1 = new hwt.widgets.Button(m1,function(m){
+      m.set(m.get().toLowerCase());
+    },m2);
+  document.body.appendChild(l1.domNode);
+  document.body.appendChild(t1.domNode);
+  document.body.appendChild(c1.domNode);
+  document.body.appendChild(b1.domNode);
+}
+</script>
+<style type='text/css'>
+*.rot { background-color:#FF0000 }
+*.gruen { background-color:#00FF00 }
+*.blau { background-color:#0000FF }
+</style>
+</head>
+<body onload="init()">
+</body>
+</html>
