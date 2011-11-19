@@ -6,4 +6,5 @@ main = runHWTApp $ do
   m1 <- readModel v1
   m2 <- readWriteModel v1
   t1 <- textField m2 Nothing Nothing
-  label m1
+  l1 <- label m1
+  panel Nothing [t1,l1]

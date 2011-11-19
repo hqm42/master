@@ -51,7 +51,12 @@ data Value = Value
 type HWT a = StateT JSS IO a
 
 value :: String -> HWT (JS Value)
-value c = addDef ("new hwt.Value('" ++ c ++ "')") "v"
+value c = do
+  i <- genId "v"
+  let
+    res = JS ("new hwt.Value('" ++ c ++ "','" ++ i ++ "')") i
+  defVar [toVarDef res]
+  return res
 
 readModel :: JS Value -> HWT (JS Model)
 readModel v = addDef ("new hwt.ReadModel(" ++ (jsReference v) ++ ")") "rm"
@@ -74,6 +79,14 @@ textField s opt_dis opt_class = do
       Just c -> "," ++ jsReference c
     opts = dis ++ clas
   addDef ("new hwt.widgets.TextField(" ++ jsReference s ++ opts ++ ")") "t"
+
+panel :: Maybe (JS Model) -> [JS Element] -> HWT (JS Element)
+panel opt_class childWidgets = addDef ("new hwt.widgets.Panel(" ++ opt ++ ws ++ ")") "p"
+  where
+    opt = case opt_class of
+      Nothing -> ""
+      Just m -> (jsReference m) ++ ","
+    ws = join "," (map jsReference childWidgets)
 
 toVarDef :: JS a -> JS VarDef
 toVarDef (JS v r) = JS v r
@@ -112,7 +125,7 @@ runHWTApp e = do
 
 mkYesod "HWTApp" [parseRoutes|
 / HomeR GET
-/model/#String ModelR POST
+/value/#String ValueR POST
 /static StaticR Static getStaticFiles
 |]
 
@@ -138,25 +151,28 @@ getHomeR = do
     body = defaultJSApp (renderJS root (varDefs jss) models)
   return $ RepHtml $ toContent body
 
-postModelR :: String -> Handler RepPlain
-postModelR modelIndex = do
+postValueR :: String -> Handler RepPlain
+postValueR valueName = do
   postData <- lift consume
   let
-    newModel = L.unpack $ L.fromChunks postData
+    newValue = L.unpack $ L.fromChunks postData
   sk <- getSessionKey
-  HWTApp _ _ models <- getYesod
-  liftIO $ atomically $ do updateModel models sk modelIndex newModel
-  return $ RepPlain $ toContent ("OK" :: String)
+  HWTApp _ _ values <- getYesod
+  info <- liftIO $ atomically $ do updateValues values sk valueName newValue
+  liftIO $ putStrLn $ show info
+  return $ RepPlain $ toContent ("OK: " ++ valueName ++ ":"++ newValue :: String)
 
-updateModel :: TVar [(String, TVar [(String,String)])] -> String -> String -> String -> STM ()
-updateModel models sk mr newModel = do
-  ms <- readTVar models
-  case lookup sk ms of
+updateValues :: TVar [(String, TVar [(String,String)])] -> String -> String -> String -> STM (String,[(String,String)])
+updateValues values sk valueName newValue = do
+  vs <- readTVar values
+  case lookup sk vs of
     Nothing -> undefined -- TODO FIXME : Session not found
-    Just msT -> do
-      ms' <- readTVar msT
-      writeTVar msT $ (mr,newModel) : [p | p@(r,_) <- ms', r /= mr]
-
+    Just vsT -> do
+      vs' <- readTVar vsT
+      let
+        newSessionData = (valueName,newValue) : [p | p@(r,_) <- vs', r /= valueName]
+      writeTVar vsT newSessionData 
+      return (sk,newSessionData)
 -- Yesod client session
 
 sessionKeyKey = "sessionKey"

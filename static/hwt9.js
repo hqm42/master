@@ -1,8 +1,9 @@
 goog.require('goog.net.XhrIo');
 goog.require('goog.dom');
 goog.require('goog.events');
-goog.provide('goog.ui');
+goog.require('goog.array');
 
+goog.provide('hwt.TransientValue');
 goog.provide('hwt.Value');
 goog.provide('hwt.Model');
 goog.provide('hwt.ReadModel');
@@ -14,17 +15,32 @@ goog.provide('hwt.widgets.Textfield');
 goog.provide('hwt.widgets.Checkbox');
 goog.provide('hwt.widgets.Button');
 
-hwt.Value = function(content) {
+hwt.TransientValue = function(content) {
   this.content = content;
   this.models = new Array();
 };
-hwt.Value.prototype.get = function() {return this.content};
-hwt.Value.prototype.set = function(content) {
+hwt.TransientValue.prototype.get = function() {return this.content};
+hwt.TransientValue.prototype.set = function(content) {
   this.content = content;
   this.models.forEach(function(model) {
     model.notify();
   });
 };
+
+hwt.Value = function(content,persistentName) {
+  hwt.TransientValue.call(this,content);
+  this.persistentName = persistentName;
+};
+goog.inherits(hwt.Value,hwt.TransientValue);
+hwt.Value.prototype.set = function(content) {
+  hwt.TransientValue.prototype.set.call(this,content);
+  that = this;
+  goog.net.XhrIo.send('value/' + that.persistentName, function(e) {
+    var xhr = e.target;
+    var t = xhr.getResponseText();
+    //alert(t);
+  },'POST',content);
+}
 
 hwt.Model = function() {
   this.slots = new Array();
@@ -37,7 +53,7 @@ hwt.Model.prototype.notify = function() {
 hwt.Model.prototype.addSlot = function(slot) {
   this.slots.push(slot);
   slot(); // updates the widget
-}
+};
 
 hwt.ReadModel = function(value) {
   hwt.Model.call(this);
@@ -60,7 +76,6 @@ hwt.Widget = function(domNode) {
   var that = this;
   this.getRootNode = function() {return that.domNode};
 };
-//hwt.Widget.prototype.getRootNode = function() {return this.domNode};
 
 hwt.DisableableWidget = function(getElementToDisable,disabledModel) {
   var that = this;
@@ -73,7 +88,7 @@ hwt.DisableableWidget = function(getElementToDisable,disabledModel) {
       }
     });
   }
-}
+};
 
 hwt.TextContentWidget = function(getTextParent,textModel) {
   var that = this;
@@ -92,6 +107,13 @@ hwt.ClassWidget = function(getClassParent,classModel) {
     });
   }
 };
+
+hwt.ContainerWidget = function(getBodyNode,var_widgets) {
+  this.subWidgets = goog.array.slice(arguments,1);
+  this.subWidgets.forEach(function(subWidget) {
+    goog.dom.appendChild(getBodyNode(),subWidget.domNode);
+  });
+}
 
 hwt.widgets.Label = function(textModel,opt_classModel) {
   hwt.Widget.call(this,goog.dom.createDom('span'));
@@ -141,3 +163,14 @@ hwt.widgets.Button = function(textModel,action,actionModel,opt_disabledModel) {
   });
 }
 goog.inherits(hwt.widgets.Button,hwt.Widget);
+
+hwt.widgets.Panel = function(opt_classModel,var_subWidgets) {
+  hwt.Widget.call(this,goog.dom.createDom('div'));
+  if (goog.isDef(opt_classModel) && ('addSlot' in opt_classModel)) {
+    hwt.ClassWidget.call(this,this.getRootNode,opt_classModel);
+    hwt.ContainerWidget.apply(this,goog.array.concat(this.getRootNode,goog.array.slice(arguments,1)));
+  } else {
+    hwt.ContainerWidget.apply(this,goog.array.concat(this.getRootNode,goog.array.clone(arguments)));
+  }
+};
+goog.inherits(hwt.widgets.Panel,hwt.Widget);
