@@ -7,7 +7,8 @@
 module HWT8 where
 
 import Network.Wai (Request)
-import Control.Monad.State (StateT(..), gets, modify)
+import qualified Control.Monad.State as MS (StateT(..), get, modify)
+import Control.Monad.Writer (WriterT(..), Writer,tell,runWriter,runWriterT)
 import Data.String.Utils (join)
 import qualified Data.ByteString.Lazy.Char8 as L
 import qualified Data.Text as T
@@ -31,16 +32,17 @@ data JS a = JS {
     jsReference :: String
   } deriving Show
 
-data JSS = JSS {
-    nextId :: Int,
+data InitState = InitState {
+    rootNode :: JS Element,
     varDefs :: [JS VarDef],
-    initialModels :: [(String,String)]
-  } -- deriving Show
+    initValues :: [(String,String)],
+    nextId :: Int
+  } deriving Show
 
 data HWTApp = HWTApp {
   getStaticFiles :: Static,
-  static :: (JS Element,JSS), -- init page
-  models :: TVar [(String, TVar [(String,String)])] -- [(sessionKey,[(ref,model)])]
+  initState :: InitState, -- init page
+  values :: TVar [(String, TVar [(String,String)])] -- [(sessionKey,[(ref,value)])]
 }
 
 data VarDef = VarDef 
@@ -48,7 +50,9 @@ data Element = Element
 data Model = Model
 data Value = Value
 
-type HWT a = StateT JSS IO a
+type ValueInit = (String,String)
+
+type HWT a = MS.StateT Int (WriterT [JS VarDef] (Writer [ValueInit])) a
 
 value :: String -> HWT (JS Value)
 value c = do
@@ -64,9 +68,12 @@ readModel v = addDef ("new hwt.ReadModel(" ++ (jsReference v) ++ ")") "rm"
 readWriteModel :: JS Value -> HWT (JS Model)
 readWriteModel v = addDef ("new hwt.ReadWriteModel(" ++ jsReference v ++ ")") "rwm"
 
-label :: JS Model -> HWT (JS Element)
-label s = do
-  addDef (concat ["new hwt.widgets.Label(",jsReference s,")"]) "l"
+label :: JS Model -> Maybe (JS Model) -> HWT (JS Element)
+label s opt_class = addDef (concat ["new hwt.widgets.Label(",opt,jsReference s,")"]) "l"
+  where
+    opt = case opt_class of
+      Nothing -> ""
+      Just c -> "," ++ (jsReference c)
 
 textField :: JS Model -> Maybe (JS Model) ->  Maybe (JS Model) -> HWT (JS Element)
 textField s opt_dis opt_class = do
@@ -91,12 +98,12 @@ panel opt_class childWidgets = addDef ("new hwt.widgets.Panel(" ++ opt ++ ws ++ 
 toVarDef :: JS a -> JS VarDef
 toVarDef (JS v r) = JS v r
 
-defVar newVarDefs = do
-  modify (\s -> s{varDefs = (varDefs s) ++ newVarDefs})
+defVar newVarDefs = tell newVarDefs
 
+genId :: String -> HWT String
 genId s = do
-  i <- gets nextId
-  modify (\s -> s{nextId = i + 1})
+  i <- MS.get
+  MS.modify (+1)
   return $ s ++ (show i)
 
 addDef :: String -> String -> HWT (JS a)
@@ -108,17 +115,27 @@ addDef c t = do
   return $ res
 
 renderJS :: JS Element -> [JS VarDef] -> [(String,String)] -> String
-renderJS root defs models = join "\n" $ defs' ++ [root']
+renderJS root defs values = join "\n" $ defs' ++ values' ++ [root']
   where
     defs' = map (\(JS v r) -> concat ["var ",r," = ",v,";"]) defs
     root' = concat ["document.body.appendChild(",(jsReference root),".domNode);"]
+    values' = map (\(r,v) -> concat [r,".init('",v,"');"]) values
+
+toInitState :: HWT (JS Element) -> InitState
+toInitState e = InitState root defs inits nextId
+  where
+    e' = MS.runStateT e 0 -- m (JS Element, newId)
+    e'' = runWriterT e' -- m ((JS Element, newId),[JS VarDef])
+    (((root,nextId),defs),inits) = runWriter e'' -- (((JS Element, newId),[JS VarDef]),[ValueInit])
 
 runHWTApp :: HWT (JS Element) -> IO ()
 runHWTApp e = do
-  (root,jss) <- runStateT e (JSS 0 [] [])
+  let
+    is = toInitState e
+  putStrLn $ show is
   ms <- newTVarIO []
   staticFiles <- staticDevel "static"
-  app <- toWaiApp $ HWTApp staticFiles (root,jss) ms
+  app <- toWaiApp $ HWTApp staticFiles is ms
   run 8080 $ app
   
 -- Yesod routes
@@ -135,20 +152,18 @@ instance Yesod HWTApp where
 getHomeR :: Handler RepHtml
 getHomeR = do
   sk <- getSessionKey
-  HWTApp _ (root,jss) ms <- getYesod
-  models <- liftIO $ atomically $
+  HWTApp _ InitState{rootNode=root,varDefs=varDefs,initValues=initValues} sessionsT <- getYesod
+  values <- liftIO $ atomically $
     do
-      ms' <- readTVar ms
-      case lookup sk ms' of
+      sessions <- readTVar sessionsT
+      case lookup sk sessions of
         Nothing -> do
-          let
-            im = (initialModels jss)
-          initialModelsT <- newTVar im
-          writeTVar ms $ (sk,initialModelsT) : ms'
-          return im
-        Just modelsT -> readTVar modelsT
+          initValuesT <- newTVar initValues
+          writeTVar sessionsT $ (sk,initValuesT) : sessions
+          return initValues
+        Just valuesT -> readTVar valuesT
   let
-    body = defaultJSApp (renderJS root (varDefs jss) models)
+    body = defaultJSApp (renderJS root varDefs values)
   return $ RepHtml $ toContent body
 
 postValueR :: String -> Handler RepPlain

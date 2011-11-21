@@ -14,7 +14,7 @@ Executable hwt
   Main-is:           Hallo.hs
 
   Build-depends:    haskell2010 >= 1.0 && < 2.0,
-                    yesod == 0.9.2,
+                    yesod,
                     bytestring,
                     enumerator,
                     warp,
@@ -22,6 +22,5 @@ Executable hwt
                     stm,
                     http-types,
                     text,
-                    mtl,
-                    MissingH
-
+                    MissingH,
+                    mtl

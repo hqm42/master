@@ -14,6 +14,7 @@ goog.provide('hwt.widgets.Label')
 goog.provide('hwt.widgets.Textfield');
 goog.provide('hwt.widgets.Checkbox');
 goog.provide('hwt.widgets.Button');
+goog.provide('hwt.widgets.Panel');
 
 hwt.TransientValue = function(content) {
   this.content = content;
@@ -26,6 +27,7 @@ hwt.TransientValue.prototype.set = function(content) {
     model.notify();
   });
 };
+hwt.TransientValue.prototype.init = hwt.TransientValue.prototype.set;
 
 hwt.Value = function(content,persistentName) {
   hwt.TransientValue.call(this,content);
