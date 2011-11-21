@@ -35,14 +35,14 @@ data JS a = JS {
 data InitState = InitState {
     rootNode :: JS Element,
     varDefs :: [JS VarDef],
-    initValues :: [(String,String)],
+    initValues :: [ValueInit],
     nextId :: Int
   } deriving Show
 
 data HWTApp = HWTApp {
   getStaticFiles :: Static,
   initState :: InitState, -- init page
-  values :: TVar [(String, TVar [(String,String)])] -- [(sessionKey,[(ref,value)])]
+  values :: TVar [(String, TVar [ValueInit])] -- [(sessionKey,[(ref,value)])]
 }
 
 data VarDef = VarDef 
@@ -50,7 +50,7 @@ data Element = Element
 data Model = Model
 data Value = Value
 
-type ValueInit = (String,String)
+data ValueInit = ValueInit String String deriving Show
 
 type HWT a = MS.StateT Int (WriterT [JS VarDef] (Writer [ValueInit])) a
 
@@ -59,6 +59,7 @@ value c = do
   i <- genId "v"
   let
     res = JS ("new hwt.Value('" ++ c ++ "','" ++ i ++ "')") i
+  lift $ lift $ tell [ValueInit i c]
   defVar [toVarDef res]
   return res
 
@@ -114,12 +115,12 @@ addDef c t = do
   defVar [toVarDef res]
   return $ res
 
-renderJS :: JS Element -> [JS VarDef] -> [(String,String)] -> String
+renderJS :: JS Element -> [JS VarDef] -> [ValueInit] -> String
 renderJS root defs values = join "\n" $ defs' ++ values' ++ [root']
   where
     defs' = map (\(JS v r) -> concat ["var ",r," = ",v,";"]) defs
     root' = concat ["document.body.appendChild(",(jsReference root),".domNode);"]
-    values' = map (\(r,v) -> concat [r,".init('",v,"');"]) values
+    values' = map (\(ValueInit r v) -> concat [r,".init('",v,"');"]) values
 
 toInitState :: HWT (JS Element) -> InitState
 toInitState e = InitState root defs inits nextId
@@ -158,9 +159,9 @@ getHomeR = do
       sessions <- readTVar sessionsT
       case lookup sk sessions of
         Nothing -> do
-          initValuesT <- newTVar initValues
+          initValuesT <- newTVar []
           writeTVar sessionsT $ (sk,initValuesT) : sessions
-          return initValues
+          return [] -- values are initial and do not have to be initialized again
         Just valuesT -> readTVar valuesT
   let
     body = defaultJSApp (renderJS root varDefs values)
@@ -177,7 +178,7 @@ postValueR valueName = do
   liftIO $ putStrLn $ show info
   return $ RepPlain $ toContent ("OK: " ++ valueName ++ ":"++ newValue :: String)
 
-updateValues :: TVar [(String, TVar [(String,String)])] -> String -> String -> String -> STM (String,[(String,String)])
+updateValues :: TVar [(String, TVar [ValueInit])] -> String -> String -> String -> STM (String,[ValueInit])
 updateValues values sk valueName newValue = do
   vs <- readTVar values
   case lookup sk vs of
@@ -185,7 +186,7 @@ updateValues values sk valueName newValue = do
     Just vsT -> do
       vs' <- readTVar vsT
       let
-        newSessionData = (valueName,newValue) : [p | p@(r,_) <- vs', r /= valueName]
+        newSessionData = (ValueInit valueName newValue) : [p | p@(ValueInit r _) <- vs', r /= valueName]
       writeTVar vsT newSessionData 
       return (sk,newSessionData)
 -- Yesod client session
