@@ -179,10 +179,15 @@ postValueR valueName = do
   return $ RepPlain $ toContent ("OK: " ++ valueName ++ ":"++ newValue :: String)
 
 updateValues :: TVar [(String, TVar [ValueInit])] -> String -> String -> String -> STM (String,[ValueInit])
-updateValues values sk valueName newValue = do
-  vs <- readTVar values
-  case lookup sk vs of
-    Nothing -> undefined -- TODO FIXME : Session not found
+updateValues sessions sk valueName newValue = do
+  ss <- readTVar sessions
+  case lookup sk ss of
+    Nothing -> do
+      let
+        newSessionData = [ValueInit valueName newValue]
+      sessionT <- newTVar newSessionData
+      writeTVar sessions $ (sk,sessionT) : ss
+      return (sk,newSessionData)
     Just vsT -> do
       vs' <- readTVar vsT
       let
