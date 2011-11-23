@@ -15,9 +15,8 @@ import qualified Data.Text as T
 import Network.HTTP.Types (statusOK)
 import Control.Monad.STM
 import Control.Concurrent.STM.TVar
-import Control.Concurrent.STM.TChan
+import Control.Concurrent.STM.TMVar
 import Data.Monoid
-
 
 import Yesod
 import Yesod.Static
@@ -51,7 +50,7 @@ data HWTApp = HWTApp {
 
 data HWTSession = HWTSession {
   sessionValues :: TVar ValueList,
-  updates :: TChan ValueList
+  updates :: TMVar ValueList
 }
 type ValueList = [ValueInit]
 type SessionId = String
@@ -145,11 +144,11 @@ addDef c t = do
   return $ res
 
 renderJS :: JS Element -> [JS VarDef] -> [ValueInit] -> String
-renderJS root defs values = join "\n" $ defs' ++ values' ++ [root'] ++ [poll]
+renderJS root defs values = join "\n" $ defs' ++ inits ++ [root'] ++ [poll]
   where
     defs' = map (\(JS v r) -> concat ["var ",r," = ",v,";"]) defs
     root' = concat ["document.body.appendChild(",(jsReference root),".domNode);"]
-    values' = map (\(ValueInit r v) -> concat [r,".init('",v,"');"]) values
+    inits = map (\(ValueInit r v) -> concat [r,".init('",v,"');"]) values
     poll = "pollingHandler.poll();"
 
 -- Server
@@ -181,7 +180,7 @@ runHWTApp e = do
   putStrLn $ show is
   sessions <- newTVarIO []
   global <- newTVarIO $ initServerValues is
-  staticFiles <- staticDevel "static"
+  staticFiles <- static "static"
   app <- toWaiApp $ HWTApp staticFiles is sessions global
   run 8080 $ app
   
@@ -210,7 +209,7 @@ getHomeR = do
       case lookup sk sessions of
         Nothing -> do
           initValuesT <- newTVar []
-          initUpdatesT <- newTChan
+          initUpdatesT <- newEmptyTMVar
           writeTVar sessionsT $ (sk,HWTSession initValuesT initUpdatesT) : sessions
           return [] -- values are initial and do not have to be initialized again
         Just session -> readTVar $ sessionValues session
@@ -229,7 +228,11 @@ postValueR valueName = do
 
 getUpdatesR :: Handler RepJson
 getUpdatesR = do
-  return $ RepJson $ toContent ("{\"OK\" : true, \"updates\" : {}}" :: String)
+  HWTSession{updates = updatesTM} <- getHWTSession
+  updateList <- liftIO $ atomically $ takeTMVar updatesTM
+  let
+    updates = "{" ++ (join "," (map (\(ValueInit k v) -> concat ["\"",k,"\":\"",v,"\""]) updateList)) ++ "}"
+  return $ RepJson $ toContent ("{\"OK\" : true, \"updates\" : " ++ updates ++ "}" :: String)
 
 getSingleUpdateR :: String -> Handler RepJson
 getSingleUpdateR valueName = do
