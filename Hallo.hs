@@ -7,4 +7,7 @@ main = runHWTApp $ do
   m2 <- readWriteModel v1
   t1 <- textField m2 Nothing Nothing
   l1 <- label m1 Nothing
-  panel Nothing [t1,l1]
+  sv1 <- serverValue "asdf"
+  m3 <- readModel sv1
+  l2 <- label m3 Nothing
+  panel Nothing [t1,l1,l2]

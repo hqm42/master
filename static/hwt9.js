@@ -16,6 +16,52 @@ goog.provide('hwt.widgets.Checkbox');
 goog.provide('hwt.widgets.Button');
 goog.provide('hwt.widgets.Panel');
 
+pollingInterval = 3000;
+
+hwt.PollingHandler = function() {
+  this.values = {};
+};
+hwt.PollingHandler.prototype.poll = function() {
+  var that = this;
+  this.handleUpdates(function(updates) {
+    for (persistentName in updates) {
+      that.values[persistentName].init(updates[persistentName]);
+    };
+    window.setTimeout(function() {that.poll()},pollingInterval);
+  });
+}
+hwt.PollingHandler.prototype.handleUpdates = function(f) {
+  goog.net.XhrIo.send('updates', function(e) {
+    var xhr = e.target;
+    var r = xhr.getResponseJson();
+    //alert(r);
+    if (r.OK) {
+      f(r.updates);
+    } else {
+      alert('Updating Values failed!');
+    }
+  });
+};
+hwt.PollingHandler.prototype.addValue = function(value) {
+  if (! value.persistentName) {
+    alert("Can not poll transient value");
+  } else {
+    this.values[value.persistentName] = value;
+  }
+};
+hwt.PollingHandler.prototype.get = function(persistentName,f) {
+  goog.net.XhrIo.send('updates/' + persistentName, function(e) {
+    var xhr = e.target;
+    var r = xhr.getResponseJson();
+    //alert(r);
+    if (r.OK) {
+      f(r.value);
+    } else {
+      alert('Updating Value ' + persistentName + ' failed!');
+    }
+  });
+};
+
 hwt.TransientValue = function(content) {
   this.content = content;
   this.models = new Array();
@@ -29,9 +75,10 @@ hwt.TransientValue.prototype.set = function(content) {
 };
 hwt.TransientValue.prototype.init = hwt.TransientValue.prototype.set;
 
-hwt.Value = function(content,persistentName) {
+hwt.Value = function(pollingHandler,content,persistentName) {
   hwt.TransientValue.call(this,content);
   this.persistentName = persistentName;
+  pollingHandler.addValue(this);
 };
 goog.inherits(hwt.Value,hwt.TransientValue);
 hwt.Value.prototype.set = function(content) {
@@ -43,6 +90,18 @@ hwt.Value.prototype.set = function(content) {
     //alert(t);
   },'POST',content);
 }
+
+hwt.ServerValue = function(pollingHandler,persistentName) {
+  hwt.TransientValue.call(this,null);
+  var that = this;
+  pollingHandler.get(persistentName,function(content) {
+    that.persistentName = persistentName;
+    that.init(content);
+    pollingHandler.addValue(that);
+  });
+};
+goog.inherits(hwt.ServerValue,hwt.TransientValue);
+hwt.ServerValue.prototype.set = function(){alert('Setting ServerValues is not permitted!');};
 
 hwt.Model = function() {
   this.slots = new Array();
