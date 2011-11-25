@@ -16,7 +16,7 @@ goog.provide('hwt.widgets.Checkbox');
 goog.provide('hwt.widgets.Button');
 goog.provide('hwt.widgets.Panel');
 
-pollingInterval = 300;
+pollingInterval = 0;
 
 hwt.PollingHandler = function() {
   this.values = {};
