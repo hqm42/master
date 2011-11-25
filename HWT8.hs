@@ -130,6 +130,15 @@ value c = do
   defVar $ toVarDef res
   return res
 
+transientValue :: String -> HWT (JS Value)
+transientValue c = do
+  i <- genId "v"
+  let
+    res = (i,"new hwt.TransientValue('" ++ c ++ "')")
+  -- tell $ mempty{clientValues = M.singleton i $ toJSON c} -- TransientValues are not present at server side
+  defVar $ toVarDef res
+  return res
+
 readModel :: JS Value -> HWT (JS Model)
 readModel v = addDef ("new hwt.ReadModel(" ++ (jsReference v) ++ ")") "rm"
 
@@ -163,8 +172,13 @@ panel opt_class childWidgets = addDef ("new hwt.widgets.Panel(" ++ opt ++ ws ++ 
       Just m -> (jsReference m) ++ ","
     ws = join "," (map jsReference childWidgets)
 
-action :: JS Model -> (String -> STM ()) -> HWT (JS Action)
-action = undefined -- TODO
+button :: JS Model -> (JSValue -> HWTAction ()) -> JS Value -> HWT (JS Element)
+button content action actionValue = do
+  actionHandlerValue <- value ""
+  valueListener actionHandlerValue action
+  addDef ("new hwt.widgets.Button(" ++ (jsReference content) 
+                                    ++ ",copyTo(" ++ (jsReference actionHandlerValue) ++ "),"
+                                    ++ (jsReference actionValue) ++ ")") "b"
 
 -- Client helper
 
@@ -193,7 +207,7 @@ renderJS root defs values = join "\n" $ defs' ++ inits ++ [root'] ++ [poll]
   where
     defs' = map (\(r,v) -> concat ["var ",show r," = ",v,";"]) defs
     root' = concat ["document.body.appendChild(",(jsReference root),".domNode);"]
-    inits = map (\(r,v) -> concat [show r,".init('",show $ pp_value v,"');"]) $ M.toList values
+    inits = map (\(r,v) -> concat [show r,".init(",show $ pp_value v,");"]) $ M.toList values
     poll = "pollingHandler.poll();"
 
 -- Server
@@ -309,6 +323,8 @@ handleUpdates allSessionsT session us = do
 
 getUpdatesR :: Handler RepJson
 getUpdatesR = do
+  sid <- getSessionKey
+  liftIO $ putStrLn $ show sid
   HWTSession{updates = updatesTM} <- getHWTSession
   updateMap <- liftIO $ atomically $ takeTMVar updatesTM
   let
@@ -391,6 +407,8 @@ getSessionKey = do
   case sk of
     Just key -> return $ T.unpack key
     Nothing -> do
-      newSessionKey <- newIdent
-      setSession sessionKeyKey $ T.pack newSessionKey
+      newSessionId <- liftIO randomIO
+      let
+        newSessionKey = "session" ++ show (newSessionId :: Int)
+      setSession sessionKeyKey $ T.pack newSessionKey 
       return newSessionKey

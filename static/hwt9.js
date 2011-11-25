@@ -18,6 +18,14 @@ goog.provide('hwt.widgets.Panel');
 
 pollingInterval = 0;
 
+// dlh
+
+function copyTo(valueTo) {
+  return function(valueFrom) {
+    valueTo.set(valueFrom.get());
+  };
+};
+
 hwt.PollingHandler = function() {
   this.values = {};
 };
