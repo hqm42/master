@@ -2,6 +2,7 @@ goog.require('goog.net.XhrIo');
 goog.require('goog.dom');
 goog.require('goog.events');
 goog.require('goog.array');
+goog.require('goog.style');
 
 goog.provide('hwt.TransientValue');
 goog.provide('hwt.Value');
@@ -50,12 +51,8 @@ hwt.PollingHandler.prototype.handleUpdates = function(f) {
     }
   });
 };
-hwt.PollingHandler.prototype.addValue = function(value) {
-  if (! value.persistentName) {
-    alert("Can not poll transient value");
-  } else {
-    this.values[value.persistentName] = value;
-  }
+hwt.PollingHandler.prototype.addValue = function(name,value) {
+  this.values[name] = value;
 };
 hwt.PollingHandler.prototype.get = function(persistentName,f) {
   goog.net.XhrIo.send('updates/' + persistentName, function(e) {
@@ -70,9 +67,10 @@ hwt.PollingHandler.prototype.get = function(persistentName,f) {
   });
 };
 
-hwt.TransientValue = function(content) {
+hwt.TransientValue = function(pollingHandler,content,transientName) {
   this.content = content;
   this.models = new Array();
+  pollingHandler.addValue(transientName,this);
 };
 hwt.TransientValue.prototype.get = function() {return this.content};
 hwt.TransientValue.prototype.set = function(content) {
@@ -84,14 +82,13 @@ hwt.TransientValue.prototype.set = function(content) {
 hwt.TransientValue.prototype.init = hwt.TransientValue.prototype.set;
 
 hwt.Value = function(pollingHandler,content,persistentName) {
-  hwt.TransientValue.call(this,content);
+  hwt.TransientValue.call(this,pollingHandler,content,persistentName);
   this.persistentName = persistentName;
-  pollingHandler.addValue(this);
 };
 goog.inherits(hwt.Value,hwt.TransientValue);
 hwt.Value.prototype.set = function(content) {
   hwt.TransientValue.prototype.set.call(this,content);
-  that = this;
+  var that = this;
   goog.net.XhrIo.send('value/' + that.persistentName, function(e) {
     var xhr = e.target;
     var t = xhr.getResponseText();
@@ -100,12 +97,10 @@ hwt.Value.prototype.set = function(content) {
 }
 
 hwt.ServerValue = function(pollingHandler,persistentName) {
-  hwt.TransientValue.call(this,null);
+  hwt.TransientValue.call(this,pollingHandler,null,persistentName);
   var that = this;
   pollingHandler.get(persistentName,function(content) {
-    that.persistentName = persistentName;
     that.init(content);
-    pollingHandler.addValue(that);
   });
 };
 goog.inherits(hwt.ServerValue,hwt.TransientValue);
@@ -139,6 +134,21 @@ goog.inherits(hwt.ReadWriteModel,hwt.ReadModel);
 hwt.ReadWriteModel.prototype.set = function(content) {
   this.value.set(content);
 };
+
+hwt.NegateModel = function(model) {
+  var that = this;
+  hwt.Model.call(this);
+  if (goog.isDef(model.get)) {
+    this.get = function() {return ! model.get();};
+  };
+  if (goog.isDef(model.set)) {
+    this.set = function(c) {model.set(!c)};
+  };
+  model.addSlot(function() {
+    that.notify()
+  });
+}
+goog.inherits(hwt.NegateModel,hwt.Model);
 
 hwt.Widget = function(domNode) {
   this.domNode = domNode;
@@ -174,11 +184,20 @@ hwt.ClassWidget = function(getClassParent,classModel) {
     classModel.addSlot(function() {
       getClassParent().className = classModel.get();
     });
-  }
+  };
 };
 
-hwt.ContainerWidget = function(getBodyNode,var_widgets) {
-  this.subWidgets = goog.array.slice(arguments,1);
+hwt.HideableWidget = function(getHiddenParent,visibleModel) {
+  var that = this;
+  if (visibleModel) {
+    visibleModel.addSlot(function() {
+      goog.style.showElement(getHiddenParent(), visibleModel.get())
+    })
+  };
+};
+
+hwt.ContainerWidget = function(getBodyNode,widgets) {
+  this.subWidgets = widgets;
   this.subWidgets.forEach(function(subWidget) {
     goog.dom.appendChild(getBodyNode(),subWidget.domNode);
   });
@@ -233,13 +252,10 @@ hwt.widgets.Button = function(textModel,action,actionModel,opt_disabledModel) {
 }
 goog.inherits(hwt.widgets.Button,hwt.Widget);
 
-hwt.widgets.Panel = function(opt_classModel,var_subWidgets) {
+hwt.widgets.Panel = function(opt_visibleModel,opt_classModel,var_subWidgets) {
   hwt.Widget.call(this,goog.dom.createDom('div'));
-  if (goog.isDef(opt_classModel) && ('addSlot' in opt_classModel)) {
-    hwt.ClassWidget.call(this,this.getRootNode,opt_classModel);
-    hwt.ContainerWidget.apply(this,goog.array.concat(this.getRootNode,goog.array.slice(arguments,1)));
-  } else {
-    hwt.ContainerWidget.apply(this,goog.array.concat(this.getRootNode,goog.array.clone(arguments)));
-  }
+  hwt.ClassWidget.call(this,this.getRootNode,opt_classModel);
+  hwt.HideableWidget.call(this,this.getRootNode,opt_visibleModel);
+  hwt.ContainerWidget.call(this,this.getRootNode,var_subWidgets);
 };
 goog.inherits(hwt.widgets.Panel,hwt.Widget);

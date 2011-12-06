@@ -77,9 +77,14 @@ data ValueUpdate = SessionValueUpdate (HWTId GValue) JSValue
 type ValueMap = M.Map (HWTId GValue) JSValue
 type SessionId = String
 
+data R = R
+data W = W
+data RW = RW
+
 data VarDef = VarDef 
 data Element = Element
-data Model = Model
+data Model a accessType = Model deriving (Typeable,Data)
+-- type GModel = Model ()
 data Value a = Value deriving (Typeable,Data)
 type GValue = Value ()
 data Action = Action
@@ -138,25 +143,33 @@ transientValue :: Data a => a -> HWT (HWTId (Value a))
 transientValue c = do
   i <- genId "v"
   let
-    res = (i,"new hwt.TransientValue(" ++ (render $ pp_value $ toJSON c) ++ ")")
+    res = (i,"new hwt.TransientValue(pollingHandler," ++ (render $ pp_value $ toJSON c) ++ ",'" ++ (show i) ++ "')")
   -- tell $ mempty{clientValues = M.singleton i $ toJSON c} -- TransientValues are not present at server side
   defVar $ toVarDef res
   return i
 
-readModel :: HWTId (Value a) -> HWT (HWTId Model)
+readModel :: HWTId (Value a) -> HWT (HWTId (Model a R))
 readModel v = addDef ("new hwt.ReadModel(" ++ (jsReference v) ++ ")") "rm"
 
-readWriteModel :: HWTId (Value a) -> HWT (HWTId Model)
+readWriteModel :: HWTId (Value a) -> HWT (HWTId (Model a RW))
 readWriteModel v = addDef ("new hwt.ReadWriteModel(" ++ jsReference v ++ ")") "rwm"
 
-label :: HWTId Model -> Maybe (HWTId Model) -> HWT (HWTId Element)
+negateModel :: HWTId (Model Bool a) -> HWT (HWTId (Model Bool a))
+negateModel m = addDef("new hwt.NegateModel(" ++ jsReference m ++ ")") "nm"
+
+constModel :: Data a => a -> HWT (HWTId (Model a R))
+constModel x = do
+  v <- transientValue x
+  readModel v
+
+label :: Show c => HWTId (Model c a) -> Maybe (HWTId (Model String a)) -> HWT (HWTId Element)
 label s opt_class = addDef (concat ["new hwt.widgets.Label(",opt,jsReference s,")"]) "l"
   where
     opt = case opt_class of
       Nothing -> ""
       Just c -> "," ++ (jsReference c)
 
-textField :: HWTId Model -> Maybe (HWTId Model) ->  Maybe (HWTId Model) -> HWT (HWTId Element)
+textField :: HWTId (Model String RW) -> Maybe (HWTId (Model Bool a)) ->  Maybe (HWTId (Model String a)) -> HWT (HWTId Element)
 textField s opt_dis opt_class = do
   let
     dis = case opt_dis of
@@ -168,11 +181,14 @@ textField s opt_dis opt_class = do
     opts = dis ++ clas
   addDef ("new hwt.widgets.TextField(" ++ jsReference s ++ opts ++ ")") "t"
 
-panel :: Maybe (HWTId Model) -> [HWTId Element] -> HWT (HWTId Element)
-panel opt_class childWidgets = addDef ("new hwt.widgets.Panel(" ++ opt ++ ws ++ ")") "p"
+panel :: Maybe (HWTId (Model Bool a)) -> Maybe (HWTId (Model String a)) -> [HWTId Element] -> HWT (HWTId Element)
+panel opt_visible opt_class childWidgets = addDef ("new hwt.widgets.Panel(" ++ optv ++ optc ++ "new Array(" ++ ws ++ "))") "p"
   where
-    opt = case opt_class of
-      Nothing -> ""
+    optv = case opt_visible of
+      Nothing -> "null,"
+      Just m -> (jsReference m) ++ ","
+    optc = case opt_class of
+      Nothing -> "null,"
       Just m -> (jsReference m) ++ ","
     ws = join "," (map jsReference childWidgets)
 
@@ -182,7 +198,7 @@ gAction f = f . uFromJSON
 uFromJSON :: Data a => JSValue -> a
 uFromJSON = (\(Ok x) -> x) . fromJSON
 
-button :: (Data a, Monoid a) => HWTId Model -> (a -> HWTAction ()) -> HWTId (Value a) -> HWT (HWTId Element)
+button :: (Data a, Monoid a, Show c) => HWTId (Model c b) -> (a -> HWTAction ()) -> HWTId (Value a) -> HWT (HWTId Element)
 button content action actionValue = do
   actionHandlerValue <- value mempty
   valueListener actionHandlerValue $ gAction action
@@ -281,7 +297,7 @@ getHomeR = do
       sessions <- readTVar sessionsT
       case M.lookup sk sessions of
         Nothing -> do
-          initValuesT <- newTVar M.empty
+          initValuesT <- newTVar initValues
           initUpdatesT <- newEmptyTMVar
           writeTVar sessionsT $ M.insert sk (HWTSession initValuesT initUpdatesT) sessions
           return M.empty -- values are initial and do not have to be initialized again
@@ -373,7 +389,7 @@ getValueJSON vn = do
         gvs <- readTVar g
         case M.lookup vn gvs of
           Just v -> return v
-          Nothing -> error $ "Value " ++ (show vn) ++ " not found!"
+          Nothing -> error $ "Value " ++ (show vn) ++ " not found! session: " ++ show svs ++ " global: " ++ show gvs
       Just v -> return v
 
 
