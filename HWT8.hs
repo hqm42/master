@@ -162,6 +162,9 @@ constModel x = do
   v <- transientValue x
   readModel v
 
+projection :: (a -> b) -> HWTId (Model a c) -> HWT (HWTId (Model b c))
+projection p model =  undefined
+
 label :: Show c => HWTId (Model c a) -> Maybe (HWTId (Model String a)) -> HWT (HWTId Element)
 label s opt_class = addDef (concat ["new hwt.widgets.Label(",opt,jsReference s,")"]) "l"
   where

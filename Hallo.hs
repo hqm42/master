@@ -21,7 +21,7 @@ chatPanel visibleModel  userName = do
   chatLogModel <- readModel chatLog
   msgCounterModel <- readModel msgCounter
   messageInput <- textField messageModel Nothing Nothing
-  sendButton <- button msgCounterModel (\newMessage -> do
+  sendButton <- button msgCounterModel (\newMessage -> when (newMessage /= "") $ do
                           uName <- getValue userName
                           oldMessages <- getValue chatLog
                           setValue chatLog $ oldMessages ++ " " ++ uName ++ ": "++ newMessage
@@ -32,10 +32,10 @@ chatPanel visibleModel  userName = do
   panel (Just visibleModel) Nothing [messageInput,sendButton,chatLogOutput]
 
 main = runHWTApp $ do
-  joinVisible <- transientValue True
+  joinVisible <- value True
   joinVisibleModel <- readModel joinVisible
   chatVisibleModel <- negateModel joinVisibleModel
-  userName <- value "HansWurst"
+  userName <- value ""
   jp <- joinPanel joinVisible userName
   cp <- chatPanel chatVisibleModel userName
   panel Nothing Nothing [jp,cp]
