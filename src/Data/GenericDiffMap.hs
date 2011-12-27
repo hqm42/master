@@ -19,6 +19,9 @@ import Data.Data
 import Data.Generics.Text
 import Data.Dynamic
 
+import Data.Maybe
+import Control.Monad.Error 
+
 import Data.GenericDiffMap.Core
 
 instance Data a => Show (GDMapValue a) where

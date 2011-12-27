@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 module HWT.Core where
 
 import HWT.Types
@@ -7,31 +8,30 @@ import Control.Monad.State
 import Data.Data
 import Text.JSON.Generic
 import Text.JSON.Pretty
+import qualified Data.IntMap as IM
 
-type HWT = State HWTInit
 
-data ConstructorCall = ConstructorCall { referenceName :: String
-                                       , constructorCall :: String }
 
-instance Show ConstructorCall where
-  show (ConstructorCall ref impl) = "var " ++ ref ++ " = " ++ impl ++ ";"
-
-data HWTInit = HWTInit { nextId :: Int
-                       , constructorCalls :: [ConstructorCall]
-                       , initialServerValues :: SessionMap
-                       , initialClientValues :: SessionMap} deriving Show
 
 newHWTInit :: HWTInit
-newHWTInit = HWTInit 0 [] GDM.newJSONGDMap GDM.newJSONGDMap
+newHWTInit = HWTInit 0 [] GDM.newJSONGDMap GDM.newJSONGDMap IM.empty IM.empty
+
+withNewHWTId :: Maybe b -> (HWTId a b -> HWT ()) -> HWT (HWTId a b)
+withNewHWTId meta a = do
+  i <- newHWTId meta
+  a i
+  return i
 
 renderJSON :: JSValue -> String
 renderJSON = render . pp_value
 
-newHWTId :: HWT (HWTId a)
-newHWTId = do
+newHWTId :: Maybe b -> HWT (HWTId a b)
+newHWTId meta = do
   i <- gets nextId
   modify $ \ini -> ini{nextId = i + 1}
-  return $ HWTId i
+  let
+    res = HWTId i meta
+  return $ res
 
 addConstructorCall :: String -> String -> HWT ()
 addConstructorCall refName impl = modify $ \ini@HWTInit{constructorCalls=cc} -> ini{constructorCalls=cc++[cv]}
@@ -66,14 +66,12 @@ serverValue' i = addConstructorCall refName impl
     impl = "new ServerValue('" ++ refName ++ "')"
 
 transientValue :: Data a => a -> HWT (TransientValue a)
-transientValue x = do
-  i <- newHWTId
+transientValue x = withNewHWTId Nothing $ \i -> do
   let
     refName = show i
     js = renderJSON $ toJSON x
     impl = "new TransientValue('" ++ refName ++ "'," ++ js ++ ")"
   addConstructorCall refName impl
-  return i
 
 model' :: String -> String -> String -> HWT ()
 model' refName m v = do
@@ -82,35 +80,45 @@ model' refName m v = do
   addConstructorCall refName impl
   return ()
 
-readModel' :: Data a => String -> HWT (ReadModel a) 
-readModel' v = do
-  i <- newHWTId
-  model' (show i) "ReadModel" v
-  return i
+readModel :: (ModelReadableLocation loc, HWTPrefix (Value a loc), Data a)
+          => Value a loc
+          -> HWT (ReadModel a loc)
+readModel v = withNewHWTId (Just v) $ \i -> model' (show i) "ReadModel" (show v)
 
-readWriteModel' :: Data a => String -> HWT (ReadWriteModel a) 
-readWriteModel' v = do
-  i <- newHWTId
-  model' (show i) "ReadWriteModel" v
-  return i
+readWriteModel :: (ModelReadableWriteableLocation loc, HWTPrefix (Value a loc), Data a)
+               => Value a loc
+               -> HWT (ReadWriteModel a loc)
+readWriteModel v = withNewHWTId (Just v) $ \i ->  model' (show i) "ReadWriteModel" (show v)
 
-readModelServer :: Data a => ServerValue a -> HWT (ReadModel a)
-readModelServer v = readModel' (show v)
+writeModel :: (ModelWriteableLocation loc, HWTPrefix (Value a loc), Data a)
+           => Value a loc
+           -> HWT (WriteModel a loc)
+writeModel v = withNewHWTId (Just v) $ \i ->  model' (show i) "WriteModel" (show v)
 
-readModelClient :: Data a => ClientValue a -> HWT (ReadModel a)
-readModelClient v = readModel' (show v)
+newElement = withNewHWTId Nothing
 
-readModelTransient :: Data a => TransientValue a -> HWT (ReadModel a)
-readModelTransient v = readModel' (show v)
+label :: ReadModel a loc -> HWT Element
+label m = newElement $ \i -> do
+  let
+    impl = "new Label(" ++ (show m) ++ ")"
+  addConstructorCall (show i) impl
 
-readWriteModelClient :: Data a => ClientValue a -> HWT (ReadWriteModel a)
-readWriteModelClient v = readWriteModel' (show v)
+projection :: ( Data a
+              , Data b
+              , HWTInitAccessibleValue (Value a loc)
+              , HWTPrefix (Model b at loc)
+              , HWTPrefix (Value b loc))
+           => GDM.Projection a b
+           -> Model a at loc
+           -> HWT (Model b at loc)
+projection p (HWTId _ (Just v)) = do
+  withInitSessionMap v $ \sm -> withNewHWTId (Just $ ref2Value $ GDM.projection p (value2Ref v) sm) $ const $ return ()
 
-readWriteModelTransient :: Data a => TransientValue a -> HWT (ReadWriteModel a)
-readWriteModelTransient v = readWriteModel' (show v)
-
-writeModelClient :: Data a => ClientValue a -> HWT (WriteModel a)
-writeModelClient v = do
-  i <- newHWTId
-  model' (show i) "WriteModel" (show v)
-  return i
+valueListener :: ( HWTInitAccessibleValue (Value a loc)
+                 , HWTActionAccessibleValueLocation loc
+                 , Data a)
+              => Value a loc
+              -> HWTAction ()
+              -> HWT Listener
+valueListener v a = withNewHWTId Nothing $ \i -> do
+  addListener v (ValueListener a)

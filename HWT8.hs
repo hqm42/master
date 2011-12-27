@@ -4,14 +4,17 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ImpredicativeTypes #-}
 
 module HWT8 where
 
 import Network.Wai (Request)
-import qualified Control.Monad.State as MS (StateT(..), get, modify)
+import qualified Control.Monad.State as MS
 import Control.Monad.Writer (Writer,WriterT,tell,runWriter,runWriterT,execWriterT)
 import Control.Monad.Reader (ReaderT(..),ask,runReaderT)
 import Control.Monad (liftM,when)
+import Control.Arrow
 import Data.String.Utils (join)
 import qualified Data.ByteString.Lazy.Char8 as L
 import qualified Data.Text as T
@@ -21,7 +24,7 @@ import Control.Concurrent.STM.TVar
 import Control.Concurrent.STM.TMVar
 import Data.Monoid
 import qualified Data.Map as M
-
+import Data.Dynamic
 import System.Random
 
 import Text.JSON.Generic
@@ -35,66 +38,111 @@ import Network.Wai.Handler.Warp (run )
 
 import Data.Enumerator.List (consume)
 
+import qualified GDiff as GD
+
 import DefaultApp
 
+-- handle for models + components + Values
 newtype HWTId a = HWTId String deriving (Eq,Ord,Typeable,Data)
 
 instance Show (HWTId a) where
   show (HWTId s) = s
 
-type JS a = (HWTId a,String)
+-- HWTId generation/conversion
+toIntId :: HWTId a -> Int
+toIntId (HWTId x) = read $ tail x
 
-jsValue :: JS a -> String
+type VarDef = HWTId Def
+type HWTWidget = HWTId Ele
+type Model a accesstype = HWTId (Mod,a,accesstype)
+type RWModel a = Model a RW
+type RModel a = Readable at => Model a at
+type WModel a = Writeable at => Model a at
+type Value a location = HWTId (Val,a,location)
+type GValue location = Value JSValue location
+
+
+-- Tags
+data Def = Def -- JS Valriable Definition
+data Ele = Ele -- Widget/Element
+data Mod = Mod -- Model
+data Val = Val -- Value
+data Act = Act -- Action
+
+
+-- access types
+class Readable at
+class Writeable at
+data R = R
+instance Readable R
+data W = W
+instance Writeable W
+data RW = RW
+instance Readable RW
+instance Writeable RW
+
+-- Var locations
+data S = S -- server
+data C = C -- client
+data T = T -- transient (client)
+data P = P -- polling handler
+
+-- JavaScript Statement -- var foo1243 = new Bla()
+type JSS = (HWTId Def, String)
+
+jsValue :: JSS -> String
 jsValue = snd
 
 jsReference :: HWTId a -> String
 jsReference (HWTId x) = x
 
+-- result of HWT Monad
 data InitState = InitState {
-    rootNode :: HWTId Element,
-    varDefs :: [JS VarDef],
-    initValues :: M.Map (HWTId GValue) JSValue,
-    initServerValues :: M.Map (HWTId GValue) JSValue,
-    nextId :: Int
+    rootNode :: HWTWidget,
+    varDefs :: [JSS],
+    initValues :: DMap,
+    initServerValues :: DMap,
+    nextId :: Int -- server value id
   } deriving Show
 
+-- Application State
 data HWTApp = HWTApp {
   getStaticFiles :: Static,
   initState :: InitState, -- init page
   sessions :: TVar (M.Map SessionId HWTSession),
-  globals :: TVar ValueMap,
-  listeners :: M.Map (HWTId GValue) [ValueListener]
+  globals :: HWTGlobal,
+  listeners :: M.Map (GValue C) [ValueListener]
 }
 
+type DMap = GD.DMap Dynamic JSValue
+
+-- global values
+type HWTGlobal = TVar DMap
+
+-- per user values
 data HWTSession = HWTSession {
-  sessionValues :: TVar ValueMap,
-  updates :: TMVar ValueMap
+  sessionValues :: TVar DMap,
+  updates :: TMVar (M.Map (GValue P) JSValue)
 }
 
-data ValueUpdate = SessionValueUpdate (HWTId GValue) JSValue
-                 | GlobalValueUpdate (HWTId GValue) JSValue
-
-type ValueMap = M.Map (HWTId GValue) JSValue
 type SessionId = String
 
-data R = R
-data W = W
-data RW = RW
-
-data VarDef = VarDef 
-data Element = Element
-data Model a accessType = Model deriving (Typeable,Data)
--- type GModel = Model ()
-data Value a = Value deriving (Typeable,Data)
-type GValue = Value ()
-data Action = Action
 
 data HWTInit = HWTInit {
-  hwtVarDefs :: [JS VarDef],
-  clientValues :: ValueMap,
-  serverValues :: ValueMap,
-  valueListeners :: M.Map (HWTId GValue) [ValueListener] -- for clientValues only
+  initNextId :: Int,
+  hwtVarDefs :: [JSS],
+  clientValues :: DMap,
+  serverValues :: DMap,
+  valueListeners :: M.Map (GValue C) [ValueListener] -- for clientValues only
 } deriving (Show)
+
+emptyHWTInit = HWTInit {
+  initNextId = 0,
+  hwtVarDefs = [],
+  clientValues = GD.empty,
+  serverValues = GD.empty,
+  valueListeners = M.empty -- for clientValues only
+}
 
 data ValueListener = ValueListener {
   call :: JSValue -> HWTAction ()
@@ -103,61 +151,58 @@ data ValueListener = ValueListener {
 instance Show ValueListener where
   show _ = "ValueListener"
 
-instance Monoid HWTInit where
-  mempty = HWTInit {
-    hwtVarDefs = [],
-    clientValues = M.empty,
-    serverValues = M.empty,
-    valueListeners = M.empty
-  }
-  mappend (HWTInit v c s l) (HWTInit v' c' s' l') =
-    HWTInit (v `mappend` v')
-      (c' `mappend` c) -- reverse append maps -> new Values override old ones
-      (s' `mappend` s)
-      (M.unionWith mappend l l') -- one Value can have multiple ValueListeners
-
-type HWT a = MS.StateT Int (Writer HWTInit) a
+type HWT a = MS.State HWTInit a
 
 data ActionScope = ActionScope {
   actionSession :: HWTSession,
-  actionGlobal :: TVar ValueMap
+  actionGlobal :: HWTGlobal
 }
+
+data ValueUpdate = SVU (GValue S) JSValue
+                 | CVU (GValue C) JSValue
+                 | TVU (GValue T) JSValue
 
 type HWTAction a = WriterT [ValueUpdate] (ReaderT ActionScope STM) a
 
 -- Client
 
-gId :: HWTId (Value a) -> HWTId GValue
+gId :: Value a at -> GValue at
 gId (HWTId x) = HWTId x
 
-value :: Data a => a -> HWT (HWTId (Value a))
+gpId :: Value a at -> GValue P
+gpId (HWTId x) = HWTId x
+
+value :: Data a => a -> HWT (Value a C)
 value c = do
-  i <- genId "v"
+  ini@HWTInit{clientValues=cv} <- MS.get
   let
+    (GD.Ref gi,cv') = GD.insert c cv
+    ini' = ini{clientValues=cv'}
+    i = HWTId $ "clientValue" ++ show gi 
     res = (i,"new hwt.Value(pollingHandler," ++ (render $ pp_value $ toJSON c) ++ ",'" ++ (show i) ++ "')")
-  tell $ mempty{clientValues = M.singleton (gId i) $ toJSON c}
-  defVar $ toVarDef res
+  MS.put ini'
+  defVar res
   return i
 
-transientValue :: Data a => a -> HWT (HWTId (Value a))
+transientValue :: Data a => a -> HWT (Value a T)
 transientValue c = do
   i <- genId "v"
   let
     res = (i,"new hwt.TransientValue(pollingHandler," ++ (render $ pp_value $ toJSON c) ++ ",'" ++ (show i) ++ "')")
   -- tell $ mempty{clientValues = M.singleton i $ toJSON c} -- TransientValues are not present at server side
-  defVar $ toVarDef res
+  defVar res
   return i
 
-readModel :: HWTId (Value a) -> HWT (HWTId (Model a R))
+readModel :: Value a at -> HWT (Model a R)
 readModel v = addDef ("new hwt.ReadModel(" ++ (jsReference v) ++ ")") "rm"
 
-readWriteModel :: HWTId (Value a) -> HWT (HWTId (Model a RW))
+readWriteModel :: Value a at -> HWT (Model a RW)
 readWriteModel v = addDef ("new hwt.ReadWriteModel(" ++ jsReference v ++ ")") "rwm"
 
-negateModel :: HWTId (Model Bool a) -> HWT (HWTId (Model Bool a))
+negateModel :: Model Bool a -> HWT (Model Bool a)
 negateModel m = addDef("new hwt.NegateModel(" ++ jsReference m ++ ")") "nm"
 
-constModel :: Data a => a -> HWT (HWTId (Model a R))
+constModel :: Data a => a -> HWT (Model a R)
 constModel x = do
   v <- transientValue x
   readModel v
@@ -165,14 +210,20 @@ constModel x = do
 projection :: (a -> b) -> HWTId (Model a c) -> HWT (HWTId (Model b c))
 projection p model =  undefined
 
-label :: Show c => HWTId (Model c a) -> Maybe (HWTId (Model String a)) -> HWT (HWTId Element)
+label :: Show a
+      => RModel a 
+      -> Maybe (RModel String)
+      -> HWT HWTWidget
 label s opt_class = addDef (concat ["new hwt.widgets.Label(",opt,jsReference s,")"]) "l"
   where
     opt = case opt_class of
       Nothing -> ""
       Just c -> "," ++ (jsReference c)
 
-textField :: HWTId (Model String RW) -> Maybe (HWTId (Model Bool a)) ->  Maybe (HWTId (Model String a)) -> HWT (HWTId Element)
+textField :: RWModel String 
+          -> Maybe (RModel Bool)
+          ->  Maybe (RModel String)
+          -> HWT HWTWidget
 textField s opt_dis opt_class = do
   let
     dis = case opt_dis of
@@ -184,7 +235,7 @@ textField s opt_dis opt_class = do
     opts = dis ++ clas
   addDef ("new hwt.widgets.TextField(" ++ jsReference s ++ opts ++ ")") "t"
 
-panel :: Maybe (HWTId (Model Bool a)) -> Maybe (HWTId (Model String a)) -> [HWTId Element] -> HWT (HWTId Element)
+panel :: Maybe (RModel Bool) -> Maybe (RModel String) -> [HWTWidget] -> HWT HWTWidget
 panel opt_visible opt_class childWidgets = addDef ("new hwt.widgets.Panel(" ++ optv ++ optc ++ "new Array(" ++ ws ++ "))") "p"
   where
     optv = case opt_visible of
@@ -201,7 +252,11 @@ gAction f = f . uFromJSON
 uFromJSON :: Data a => JSValue -> a
 uFromJSON = (\(Ok x) -> x) . fromJSON
 
-button :: (Data a, Monoid a, Show c) => HWTId (Model c b) -> (a -> HWTAction ()) -> HWTId (Value a) -> HWT (HWTId Element)
+button :: (Data a, Monoid a, Show c)
+       => RModel c
+       -> (a -> HWTAction ())
+       -> (Value a at)
+       -> HWT HWTWidget
 button content action actionValue = do
   actionHandlerValue <- value mempty
   valueListener actionHandlerValue $ gAction action
@@ -211,16 +266,15 @@ button content action actionValue = do
 
 -- Client helper
 
-toVarDef :: JS a -> JS VarDef
-toVarDef (HWTId s,v) = (HWTId s,v) 
-
-defVar :: JS VarDef -> HWT ()
-defVar newVarDef = tell $ mempty{hwtVarDefs = [newVarDef]}
+defVar :: (HWTId a,String) -> HWT ()
+defVar newVarDef = MS.modify $ \ini@HWTInit{hwtVarDefs=vd} -> ini{hwtVarDefs = vd ++ [newVarDefG]}
+  where
+    newVarDefG = first (\(HWTId x) -> HWTId x) $ newVarDef
 
 genId :: String -> HWT (HWTId a)
 genId s = do
-  i <- MS.get
-  MS.modify (+1)
+  ini@HWTInit{initNextId=i} <- MS.get
+  MS.put ini{initNextId=i+1}
   return $ HWTId $ s ++ (show i)
 
 addDef :: String -> String -> HWT (HWTId a)
@@ -228,42 +282,49 @@ addDef c t = do
   i <- genId t
   let
     res = (i,c)
-  defVar $ toVarDef res
+  defVar res
   return i
 
-renderJS :: HWTId Element -> [JS VarDef] -> ValueMap -> String
-renderJS root defs values = join "\n" $ defs' ++ inits ++ [root'] ++ [poll]
+renderJS :: HWTWidget -> [JSS] -> DMap -> String
+renderJS root defs values = join "\n" $ defs' {- ++ inits -} ++ [root'] ++ [poll]
   where
     defs' = map (\(r,v) -> concat ["var ",show r," = ",v,";"]) defs
     root' = concat ["document.body.appendChild(",(jsReference root),".domNode);"]
-    inits = map (\(r,v) -> concat [show r,".init(",show $ pp_value v,");"]) $ M.toList values
+--  inits = map (\(r,v) -> concat [show r,".init(",show $ pp_value v,");"]) $ GD.toList values
     poll = "pollingHandler.poll();"
 
 -- Server
 
-serverValue :: Data a => a -> HWT (HWTId (Value a))
+serverValue :: Data a => a -> HWT (Value a S)
 serverValue c = do
-  i <- genId "sv"
+  ini@HWTInit{serverValues=sv} <- MS.get
   let
-    res = (i,"new hwt.ServerValue(pollingHandler,'" ++ show i ++ "')")
-  tell $ mempty{serverValues = M.singleton (gId i) $ toJSON c}
-  defVar $ toVarDef res
+    (GD.Ref gi,sv') = GD.insert c sv
+    ini' = ini{serverValues=sv'}
+    i = HWTId $ "serverValue" ++ show gi 
+    res = (i,"new hwt.ServerValue(pollingHandler,'" ++ (show i) ++ "')")
+  MS.put ini'
+  defVar res
   return i
 
-valueListener :: HWTId GValue -> (JSValue -> HWTAction ()) -> HWT ()
+valueListener :: Value a C -> (JSValue -> HWTAction ()) -> HWT ()
 valueListener v f = do
-  tell $ mempty{valueListeners = M.singleton v [ValueListener f]}
+  ini@HWTInit{valueListeners=vl} <- MS.get
+  let
+    f' = ValueListener f
+    vl' = M.unionWith (++) vl $ M.singleton (gId v) [f']
+    ini' = ini{valueListeners=vl'}
+  MS.put ini'
 
 -- App
 
-toInitState :: HWT (HWTId Element) -> (InitState,M.Map (HWTId GValue) [ValueListener])
+toInitState :: HWT HWTWidget -> (InitState,M.Map (GValue C) [ValueListener])
 toInitState e = (InitState root d c s nextId,l)
   where
-    e' = MS.runStateT e 0
-    ((root,nextId),inits) = runWriter e'
-    HWTInit d c s l = inits
+    (root,inits) = MS.runState e emptyHWTInit
+    HWTInit nextId d c s l = inits
 
-runHWTApp :: HWT (HWTId Element) -> IO ()
+runHWTApp :: HWT HWTWidget -> IO ()
 runHWTApp e = do
   let
     (is,ls) = toInitState $ do
@@ -303,7 +364,7 @@ getHomeR = do
           initValuesT <- newTVar initValues
           initUpdatesT <- newEmptyTMVar
           writeTVar sessionsT $ M.insert sk (HWTSession initValuesT initUpdatesT) sessions
-          return M.empty -- values are initial and do not have to be initialized again
+          return GD.empty -- values are initial and do not have to be initialized again
         Just session -> readTVar $ sessionValues session
   let
     body = defaultJSApp (renderJS root varDefs values)
@@ -341,8 +402,9 @@ handleUpdates allSessionsT session us = do
   allSessions' <- readTVar allSessionsT
   let
     allSessions = map (updates . snd) $ M.toList allSessions'
-    update (SessionValueUpdate vn vc) = update' vn vc (updates session)
-    update (GlobalValueUpdate vn vc) = mapM_ (update' vn vc) allSessions
+    update (CVU vn vc) = update' (gpId vn) vc (updates session)
+    update (TVU vn vc) = update' (gpId vn) vc (updates session)
+    update (SVU vn vc) = mapM_ (update' (gpId vn) vc) allSessions
     update' vn vc s = do
       oldM <- tryTakeTMVar s
       putTMVar s $ case oldM of
@@ -382,55 +444,58 @@ getActionScope = do
   HWTApp{globals=g} <- getYesod
   return $ ActionScope s g
 
-getValueJSON :: HWTId GValue -> HWTAction JSValue
+getValueJSON :: GValue loc -> HWTAction JSValue
 getValueJSON vn = do
+  let
+    gi = (read $ jsReference vn) 
   ActionScope s g <- ask
   lift $ lift $ do
     svs <- readTVar $ sessionValues s
-    case M.lookup vn svs of
-      Nothing -> do
-        gvs <- readTVar g
-        case M.lookup vn gvs of
-          Just v -> return v
-          Nothing -> error $ "Value " ++ (show vn) ++ " not found! session: " ++ show svs ++ " global: " ++ show gvs
-      Just v -> return v
+    if GD.member gi svs then
+      return $ GD.render gi svs
+    else do
+      gvs <- readTVar g
+      if GD.member gi gvs then
+        return $ GD.render gi gvs
+      else
+        error $ "Value " ++ (show vn) ++ " not found! session: " ++ show svs ++ " global: " ++ show gvs
 
 
-getValue :: Data a => HWTId (Value a) -> HWTAction a
+getValue :: Data a => Value a loc -> HWTAction a
 getValue vn = do
   jv <- getValueJSON $ gId vn
   return $ uFromJSON jv
 
-setValue :: Data a => HWTId (Value a) -> a -> HWTAction ()
+setValue :: Data a => (Value a loc) -> a -> HWTAction ()
 setValue vn newContent = do
   let
-    vn' = gId vn
+    vn' = toIntId vn
     newContent' = toJSON newContent
   ActionScope s g <- ask
   update <- lift $ lift $ do
     gvs <- readTVar g
-    if M.member vn' gvs 
+    if GD.member vn' gvs 
       then
         do
-          writeTVar g $ M.insert vn' newContent' gvs
-          return $ GlobalValueUpdate vn' newContent'
+          writeTVar g $ GD.update (GD.Ref vn') newContent gvs
+          return $ SVU vn' newContent'
       else
         do
           svs <- readTVar $ sessionValues s
           when (M.member vn' svs) $ do
             writeTVar (sessionValues s) $ M.insert vn' newContent' svs
-          return $ SessionValueUpdate vn' newContent'
+          return $ CVU vn' newContent'
   tell [update]
   return ()
   
-getListeners :: HWTId GValue -> Handler [ValueListener]
+getListeners :: GValue C -> Handler [ValueListener]
 getListeners valueId = do
   HWTApp{listeners=ls} <- getYesod
   return $ case M.lookup valueId ls of
     Nothing -> []
     Just lls -> lls
 
-updateSessionValue :: HWTSession -> HWTId GValue -> JSValue -> STM ()
+updateSessionValue :: HWTSession -> GValue C -> JSValue -> STM ()
 updateSessionValue s@HWTSession{sessionValues=vsT} valueName valueContent = do
   vs <- readTVar vsT
   let

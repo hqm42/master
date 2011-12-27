@@ -20,9 +20,13 @@ module Data.GenericDiffMap.Core
   , serialize
   , deserialize
   , handleDeserialize
+  , handleLookup
   , handleInsert
   , handleUpdate
-  , handleDelete)
+  , handleDelete
+  , projection
+  , Projection
+  , derivePs )
   where
 
 import Prelude hiding (lookup)
@@ -33,9 +37,12 @@ import qualified Data.IntMap as M
 import qualified Control.Monad.State as MS
 import qualified Control.Monad.Identity as MI
 import qualified Control.Monad.Writer as MW
+import Control.Monad.Error as ME
 import Data.Maybe (fromJust)
 import Data.Monoid
-import Control.Monad (when)
+import Control.Monad (when,liftM3)
+
+import Data.GenericDiffMap.Projection
 
 data DestructuredValue a b = Primitive {
   primitive :: a,
@@ -99,6 +106,8 @@ type InsertHandler m = forall b. Data b => Monad m => Ref b -> b -> GDMapValue b
 
 type DeleteHandler m = Monad m => GRef -> m ()
 
+type LookupHandler m = forall b. Data b => Monad m => Ref b -> b -> GDMapValue b -> m b
+
 insert :: Data a => a -> GDMap g g' -> (Ref a,GDMap g g')
 insert x m = MI.runIdentity (handleInsert x (\_ _ _ -> return ()) m)
 
@@ -131,6 +140,26 @@ lookup i dm@GDMap{dynMap = m, stopRule = sr, fromG = from} = case M.lookup (gRef
   Nothing -> Nothing
 
 lookup' i dm = fromJust $ lookup i dm
+
+supplyArg :: (Monad m, Data b) => LookupHandler m -> GDMap g g' -> MS.StateT [GRef] m b
+supplyArg look dm = do 
+  (x:xs) <- MS.get
+  MS.put xs
+  xM <- handleLookup (Ref x) (\i' x' gdv' -> MS.lift $ look i' x' gdv') dm
+  return $ fromJust $ xM
+
+handleLookup :: (Monad m, Data a) => Ref a -> LookupHandler m -> GDMap g g' -> m (Maybe a)
+handleLookup i look dm@GDMap{dynMap = m, stopRule = sr, fromG = from} = case M.lookup (gRef i) m of
+  Just Primitive{primitive=d} -> case from d of
+    Just x -> do
+      res <- look i x (GDPrimitive x)
+      return $ Just res
+    Nothing -> error $ "GDiff.lookup: key " ++ show i ++ " :: (" ++ show (typeOf i) ++ ") cast failed (wrong type)"
+  Just Complex{constr=con,childRefs=cs} -> do
+    x <- MS.evalStateT (fromConstrM (supplyArg look dm) con) cs
+    res <- look i x (GDComplex (show con) cs)
+    return $ Just res
+  Nothing -> return Nothing
 
 member :: GRef -> GDMap g g' -> Bool
 member gi GDMap{dynMap=dm} = M.member gi dm
@@ -287,3 +316,9 @@ handleDelete' gi delete = do
     Primitive{} -> return ()
     Complex{childRefs=cs} -> mapM_ (\c -> handleDelete' c delete) cs
   MS.lift $ delete gi
+
+projection :: (Data a, Data b) => Projection a b -> Ref a -> GDMap g g' -> Ref b
+projection pa i m = res
+  where
+    path = execP pa
+    res = Ref $ foldl (\i' (PS _ ci) -> (childRefs $ fromJust $ M.lookup i' (dynMap m)) !! ci) (gRef i) path
