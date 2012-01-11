@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 module Data.GenericDiffMap 
   ( module Data.GenericDiffMap.Core
+  , debugLookup
   , debugUpdate
   , debugInsert
   , debugDelete
@@ -28,6 +29,11 @@ instance Data a => Show (GDMapValue a) where
   show (GDPrimitive x) = "GDPrimitive " ++ gshow x
   show (GDComplex cname cs) = "GDComplex " ++ cname ++ " " ++ show cs
 
+
+debugLookup :: LookupHandler IO
+debugLookup = \ref val gdv -> do
+  putStrLn $ show ref ++ " lookup: " ++ gshow val ++ " " ++ show gdv
+  return val
 
 debugUpdate :: UpdateHandler IO
 debugUpdate = \ref old new gdv -> putStrLn $ show ref ++ " updated: " ++ gshow old ++ " -> " ++  gshow new ++ " " ++ show gdv

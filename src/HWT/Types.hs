@@ -4,6 +4,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 
 module HWT.Types where
 
@@ -24,12 +25,17 @@ import Control.Monad.Writer
 import Control.Monad.State
 import Control.Concurrent.AdvSTM
 import Control.Concurrent.AdvSTM.TVar
+import Yesod.Static
 
 data HWTId a b = HWTId Int (Maybe b) deriving (Eq,Ord)
 
+newtype SessionKey = SK String deriving (Eq,Ord,Show)
+newtype WindowKey = WK String deriving (Eq,Ord,Show)
+
 -- monads
 type HWT = State HWTInit
-type HWTAction = WriterT SessionUpdates (ReaderT HWTSession AdvSTM)
+type HWTAction = WriterT SessionUpdates (ReaderT HWTWindow AdvSTM)
+type HWTPageReload = Reader HWTPageReloadContext
 
 -- conversions
 value2Ref :: Value a at -> GDM.Ref a
@@ -44,13 +50,18 @@ ref2Value i = HWTId (GDM.gRef i) Nothing
 gdv2JSON :: Data a => GDM.GDMapValue a -> JSValue
 gdv2JSON gdv = case gdv of
            GDM.GDPrimitive x' -> toJSON x'
-           GDM.GDComplex cn cs -> JSObject $ toJSObject [ ("constructorName",toJSON cn)
-                                                    , ("childRefs",toJSON cs)]
+           c -> complex2JSON c
+
+complex2JSON :: GDM.GDMapValue a -> JSValue
+complex2JSON (GDM.GDComplex cn cs) = JSObject $ toJSObject [ ("constructorName",toJSON cn)
+                                                           , ("childRefs",toJSON cs)]
+
 
 -- Types
 type Value a location = HWTId (ValueTag,a,location) ()
 type ServerValue a = Value a ServerLocation
 type ClientValue a = Value a ClientLocation
+type WindowValue a = Value a WindowLocation
 type TransientValue a = Value a TransientLocation
 
 type Model a accesstype loc = HWTId (ModelTag,a,accesstype) (Value a loc)
@@ -72,14 +83,17 @@ data ListenerTag
 data ServerLocation
 data ClientLocation
 data TransientLocation
+data WindowLocation
 
 class ModelReadableLocation loc
 instance ModelReadableLocation ServerLocation
 instance ModelReadableLocation ClientLocation
+instance ModelReadableLocation WindowLocation
 instance ModelReadableLocation TransientLocation
 
 class ModelWriteableLocation loc
 instance ModelWriteableLocation ClientLocation
+instance ModelWriteableLocation WindowLocation
 instance ModelWriteableLocation TransientLocation
 
 class ModelReadableWriteableLocation loc
@@ -128,6 +142,9 @@ instance HWTPrefix (ServerValue a) where
 instance HWTPrefix (ClientValue a) where
   getPrefix _ = "vC"
 
+instance HWTPrefix (WindowValue a) where
+  getPrefix _ = "vW"
+
 instance HWTPrefix (TransientValue a) where
   getPrefix _ = "vT"
 
@@ -163,29 +180,51 @@ type UpdateMap a = M.Map a JSValue
 data SessionUpdates = SessionUpdates {
   serverValueUpdates :: UpdateMaps (ServerValue ()),
   clientValueUpdates :: UpdateMaps (ClientValue ()),
+  windowValueUpdates :: UpdateMaps (WindowValue ()),
   transientValueUpdates :: UpdateMaps (TransientValue ())
 } deriving Show
 
 instance Monoid SessionUpdates where
-  mempty = SessionUpdates mempty mempty mempty
-  mappend (SessionUpdates s c t) (SessionUpdates s' c' t') = SessionUpdates (mappend s s') (mappend c c') (mappend t t')
+  mempty = SessionUpdates mempty mempty mempty mempty
+  mappend (SessionUpdates s c w t) (SessionUpdates s' c' w' t') = SessionUpdates (mappend s s') (mappend c c') (mappend w w') (mappend t t')
 
-data HWTSession = HWTSession {
-  clientValues :: TVar SessionMap,
-  serverValues :: TVar SessionMap,
-  updates :: TMVar SessionUpdates,
-  allSessions :: TVar [TVar HWTSession]
+data HWTApplicationState = HWTApplicationState {
+  applicationServerValues :: TVar SessionMap,
+  applicationSessions :: TVar (M.Map SessionKey HWTSession),
+  serverValueListeners :: ValueListeners,
+  clientValueListeners :: ValueListeners,
+  windowValueListeners :: ValueListeners,
+  newSession :: IO HWTSession,
+  applicationInit :: (Element,[ConstructorCall]),
+  getStaticFiles :: Static
 }
 
-data ApplicationState = ApplicationState {
-  globalValues :: TVar SessionMap,
-  sessions :: TVar [HWTSession]
+data HWTSession = HWTSession {
+  sessionServerValues :: TVar SessionMap,
+  sessionClientValues :: TVar SessionMap,
+  sessionWindows :: TVar (M.Map WindowKey HWTWindow),
+  newWindow :: IO HWTWindow
+}
+
+data HWTWindow = HWTWindow {
+  windowServerValues :: TVar SessionMap,
+  windowClientValues :: TVar SessionMap,
+  windowWindowValues :: TVar SessionMap,
+  windowUpdates :: TMVar SessionUpdates,
+  windowSessions :: TVar (M.Map SessionKey HWTSession),
+  windowWindows :: TVar (M.Map WindowKey HWTWindow)
+}
+
+data HWTPageReloadContext = HWTPageReloadContext {
+  pageReloadServerValues :: SessionMap,
+  pageReloadClinetValues :: SessionMap
 }
 
 -- Session/Global Variables
 class HWTActionAccessibleValueLocation loc where
   getSessionMap :: Value a loc -> HWTAction (TVar SessionMap)
   singleUpdate :: Value a loc -> (UpdateMaps (Value () loc) -> SessionUpdates)
+  callListeners :: Value () loc -> HWTApplicationState -> HWTAction ()
 
 withSessionMap :: HWTActionAccessibleValueLocation loc => Value a loc -> (TVar SessionMap -> HWTAction b) -> HWTAction b
 withSessionMap v f = do
@@ -197,6 +236,7 @@ class HWTActionGetableValueLocation loc where
 
 class HWTActionSetableValueLocation loc where
   setValue :: Data a => Value a loc -> a -> HWTAction ()
+  deserializeValue :: Value () loc -> JSValue -> HWTAction ()
 
 -- Initialization
 
@@ -204,14 +244,16 @@ data HWTInit = HWTInit { nextId :: Int
                        , constructorCalls :: [ConstructorCall]
                        , initialServerValues :: SessionMap
                        , initialClientValues :: SessionMap
+                       , initialWindowValues :: SessionMap
                        , initialServerValueListeners :: ValueListeners
-                       , initialClientValueListeners :: ValueListeners } deriving Show
+                       , initialClientValueListeners :: ValueListeners
+                       , initialWindowValueListeners :: ValueListeners} deriving Show
 
 data ConstructorCall = ConstructorCall { referenceName :: String
-                                       , constructorCall :: String }
+                                       , constructorCall :: HWTPageReload String }
 
 instance Show ConstructorCall where
-  show (ConstructorCall ref impl) = "var " ++ ref ++ " = " ++ impl ++ ";"
+  show (ConstructorCall ref impl) = "var " ++ ref ++ " = XXX;"
 
 class HWTInitAccessibleValue a where
   getIntId :: a -> Int
@@ -243,6 +285,12 @@ instance HWTInitAccessibleValue (ClientValue a) where
   getInitSessionMap _ = gets initialClientValues
   getInitListeners _ = gets initialClientValueListeners
   setInitListeners _ ls = modify $ \ini -> ini{initialClientValueListeners=ls}
+
+instance HWTInitAccessibleValue (WindowValue a) where
+  getIntId (HWTId i _) = i
+  getInitSessionMap _ = gets initialWindowValues
+  getInitListeners _ = gets initialWindowValueListeners
+  setInitListeners _ ls = modify $ \ini -> ini{initialWindowValueListeners=ls}
 
 data ValueListener = ValueListener{
   listen :: HWTAction ()

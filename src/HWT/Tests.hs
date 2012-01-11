@@ -41,9 +41,10 @@ test2 = do
     listener = head $ fromJust $ IM.lookup 0 $ initialClientValueListeners $ ini
   svsT <- newTVarIO (initialServerValues ini)
   cvsT <- newTVarIO (initialClientValues ini)
+  wvsT <- newTVarIO (initialWindowValues ini)
   upsT <- newTMVarIO mempty
   sessionsT <- newTVarIO []
   let
-    session = HWTSession cvsT svsT upsT sessionsT
+    session = HWTSession svsT cvsT wvsT upsT sessionsT
   res <- atomically $ runReaderT (runWriterT (listen listener)) session
   putStrLn $ show res

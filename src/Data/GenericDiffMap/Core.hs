@@ -9,6 +9,7 @@ module Data.GenericDiffMap.Core
   , Ref(..)
   , GRef
   , Updates(..)
+  , LookupHandler
   , UpdateHandler
   , InsertHandler
   , DeleteHandler
@@ -16,6 +17,7 @@ module Data.GenericDiffMap.Core
   , update
   , delete
   , lookup
+  , lookupGDMapValue
   , member
   , serialize
   , deserialize
@@ -41,6 +43,7 @@ import Control.Monad.Error as ME
 import Data.Maybe (fromJust)
 import Data.Monoid
 import Control.Monad (when,liftM3)
+import Data.Algorithm.Diff
 
 import Data.GenericDiffMap.Projection
 
@@ -161,13 +164,20 @@ handleLookup i look dm@GDMap{dynMap = m, stopRule = sr, fromG = from} = case M.l
     return $ Just res
   Nothing -> return Nothing
 
+lookupGDMapValue :: GRef -> GDMap g g' -> Maybe (GDMapValue g')
+lookupGDMapValue gi m@GDMap{dynMap=dm} = case M.lookup gi dm of
+  Just Primitive{serializePrimitive=r} -> Just $ GDPrimitive (r m)
+  Just Complex{constr=con,childRefs=cs} -> Just $ GDComplex (show con) cs
+  _ -> Nothing
+
 member :: GRef -> GDMap g g' -> Bool
 member gi GDMap{dynMap=dm} = M.member gi dm
 
-serialize :: GRef -> GDMap g g' -> g'
-serialize gi m@GDMap{dynMap=dm} = case fromJust $ M.lookup gi dm of
-  Primitive{serializePrimitive=r} -> r m
-  Complex{serializeComplex=r} -> r m
+serialize :: GRef -> GDMap g g' -> Maybe g'
+serialize gi m@GDMap{dynMap=dm} = case M.lookup gi dm of
+  Just Primitive{serializePrimitive=r} -> Just $ r m
+  Just Complex{serializeComplex=r} -> Just $ r m
+  Nothing -> Nothing
 
 deserialize :: GRef -> g' -> GDMap g g' -> GDMap g g'
 deserialize gi gx m = MI.runIdentity (handleDeserialize gi gx upd ins del m)

@@ -12,6 +12,7 @@ import Text.JSON.Generic
 import Data.Dynamic
 import Data.Maybe
 import qualified Data.Map as M
+import qualified Data.IntMap as IM
 import Control.Concurrent.AdvSTM
 import Control.Concurrent.AdvSTM.TVar
 import Control.Concurrent.AdvSTM.TMVar
@@ -56,12 +57,35 @@ update get upd = do
   writeTVar svsT svs'
 
 instance HWTActionAccessibleValueLocation ServerLocation where
-  getSessionMap _ = asks serverValues
+  getSessionMap _ = asks windowServerValues
   singleUpdate _ = \ums -> mempty{serverValueUpdates=ums}
+  callListeners (HWTId i _) as = do
+    let
+      lsM = IM.lookup i $ serverValueListeners as
+    case lsM of
+      Nothing -> return ()
+      Just ls -> mapM_ HWT.Types.listen ls
+
 
 instance HWTActionAccessibleValueLocation ClientLocation where
-  getSessionMap _ = asks clientValues
+  getSessionMap _ = asks windowClientValues
   singleUpdate _ = \ums -> mempty{clientValueUpdates=ums}
+  callListeners (HWTId i _) as = do
+    let
+      lsM = IM.lookup i $ clientValueListeners as
+    case lsM of
+      Nothing -> return ()
+      Just ls -> mapM_ HWT.Types.listen ls
+
+instance HWTActionAccessibleValueLocation WindowLocation where
+  getSessionMap _ = asks windowWindowValues
+  singleUpdate _ = \ums -> mempty{windowValueUpdates=ums}
+  callListeners (HWTId i _) as = do
+    let
+      lsM = IM.lookup i $ windowValueListeners as
+    case lsM of
+      Nothing -> return ()
+      Just ls -> mapM_ HWT.Types.listen ls
 
 instance HWTActionAccessibleValueLocation loc => HWTActionGetableValueLocation loc where
   getValue v = do
@@ -76,9 +100,22 @@ instance HWTActionAccessibleValueLocation loc => HWTActionSetableValueLocation l
     sm <- readTVar smT
     sm' <- GDM.handleUpdate (value2Ref v) x (updateHandler v) (insertHandler v) (deleteHandler v) sm
     writeTVar smT sm'
+  deserializeValue v@(HWTId i _) js = withSessionMap v $ \smT -> do
+    sm <- readTVar smT
+    sm' <- GDM.handleDeserialize i js (updateHandler v) (insertHandler v) (deleteHandler v) sm
+    writeTVar smT sm'
+
+modifyValue :: ( Data a
+               , HWTActionGetableValueLocation loc
+               , HWTActionSetableValueLocation loc)
+            => (Value a loc)
+            -> (a -> a)
+            -> HWTAction ()
+modifyValue v f = do
+  vc <- getValue v
+  setValue v $ f vc
 
 instance HWTActionSetableValueLocation TransientLocation where
   setValue v x = do
     tell mempty{transientValueUpdates=mempty{changedValues=M.singleton (ref2GValue $ value2Ref v) (gdv2JSON $ GDM.GDPrimitive x)}}
-
--- TESTS
+  deserializeValue = undefined
