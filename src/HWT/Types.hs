@@ -5,6 +5,9 @@
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE OverlappingInstances #-}
 
 module HWT.Types where
 
@@ -34,8 +37,22 @@ newtype WindowKey = WK String deriving (Eq,Ord,Show)
 
 -- monads
 type HWT = State HWTInit
+type HWTWidget = WriterT [ConstructorCalls] (StateT Int (Reader HWTWidgetContext))
 type HWTAction = WriterT SessionUpdates (ReaderT HWTWindow AdvSTM)
 type HWTPageReload = Reader HWTPageReloadContext
+
+class Monad m => MonadHWT m where
+  addConstructorCalls :: ConstructorCalls -> m ()
+  newHWTId :: Maybe b -> m (HWTId a b)
+  getWidgetContext :: m HWTWidgetContext
+  projection :: ( Data a
+                , Data b
+                , HWTInitAccessibleValue (Value a loc)
+                , HWTPrefix (Value a loc)
+                , HWTPrefix (Value b loc))
+             => GDM.Projection a b
+             -> Value a loc
+             -> m (Value b loc)
 
 -- conversions
 value2Ref :: Value a at -> GDM.Ref a
@@ -47,10 +64,21 @@ ref2GValue i = HWTId (GDM.gRef i) Nothing
 ref2Value :: HWTPrefix (Value a at) => GDM.Ref a -> Value a at
 ref2Value i = HWTId (GDM.gRef i) Nothing
 
-gdv2JSON :: Data a => GDM.GDMapValue a -> JSValue
-gdv2JSON gdv = case gdv of
-           GDM.GDPrimitive x' -> toJSON x'
-           c -> complex2JSON c
+gdmv2gdmvJS :: Data a => GDM.GDMapValue a -> GDM.GDMapValue JSValue
+gdmv2gdmvJS (GDM.GDPrimitive x) = GDM.GDPrimitive $ toJSON x
+gdmv2gdmvJS (GDM.GDComplex cn cs) = GDM.GDComplex cn cs
+
+toJSON2 :: ( HWTPrefix (HWTId (ValueTag,a,loc) ())
+           , Data a)
+        => Value a loc
+        -> GDM.GDMapValue JSValue
+        -> JSValue
+toJSON2 _ (GDM.GDPrimitive json) = json
+toJSON2 v (GDM.GDComplex cn cs) = JSObject $ toJSObject [ ("constructorName",toJSON cn)
+                                  , ("childRefs",toJSON (map (\i -> (show (v' v i))) cs))]
+                                  where
+                                    v' :: HWTId a b -> Int -> HWTId a b
+                                    v' (HWTId _ m) i = HWTId i m
 
 complex2JSON :: GDM.GDMapValue a -> JSValue
 complex2JSON (GDM.GDComplex cn cs) = JSObject $ toJSObject [ ("constructorName",toJSON cn)
@@ -166,7 +194,7 @@ instance HWTPrefix a => HWTPrefix (a,b) where
 
 -- Session Data
 
-type SessionMap = GDM.GDMap Dynamic JSValue
+type SessionMap = GDM.GDMap JSValue JSValue
 data UpdateMaps a = UpdateMaps { newValues :: UpdateMap a
                                , changedValues :: UpdateMap a
                                , removedValues :: [a] } deriving Show
@@ -195,7 +223,7 @@ data HWTApplicationState = HWTApplicationState {
   clientValueListeners :: ValueListeners,
   windowValueListeners :: ValueListeners,
   newSession :: IO HWTSession,
-  applicationInit :: (Element,[ConstructorCall]),
+  applicationInit :: (Element,[ConstructorCalls]),
   getStaticFiles :: Static
 }
 
@@ -235,65 +263,82 @@ class HWTActionGetableValueLocation loc where
   getValue :: Data a => Value a loc -> HWTAction a
 
 class HWTActionSetableValueLocation loc where
-  setValue :: Data a => Value a loc -> a -> HWTAction ()
-  deserializeValue :: Value () loc -> JSValue -> HWTAction ()
+  setValue :: ( HWTPrefix (Value a loc)
+              , Data a) => Value a loc -> a -> HWTAction ()
+  deserializeValue :: (HWTPrefix (Value () loc)) => Value () loc -> JSValue -> HWTAction ()
+
+class HWTActionSetableValueLocation' flag loc where
+  setValue' :: flag -> ( HWTPrefix (Value a loc)
+              , Data a) => Value a loc -> a -> HWTAction ()
+  deserializeValue' :: flag -> (HWTPrefix (Value () loc)) => Value () loc -> JSValue -> HWTAction ()
+
+instance (TransientPred loc flag, HWTActionSetableValueLocation' flag loc) => HWTActionSetableValueLocation loc where
+  setValue = setValue' (undefined :: flag)
+  deserializeValue = deserializeValue' (undefined :: flag)
+
+class TransientPred loc flag | loc->flag where {}
+
+class TypeCast   a b   | a -> b, b->a   where typeCast   :: a -> b
+instance TypeCast flag HFalse => TransientPred loc flag
+
+data HTrue
+data HFalse
 
 -- Initialization
 
 data HWTInit = HWTInit { nextId :: Int
-                       , constructorCalls :: [ConstructorCall]
+                       , constructorCalls :: [ConstructorCalls]
                        , initialServerValues :: SessionMap
                        , initialClientValues :: SessionMap
                        , initialWindowValues :: SessionMap
                        , initialServerValueListeners :: ValueListeners
                        , initialClientValueListeners :: ValueListeners
-                       , initialWindowValueListeners :: ValueListeners} deriving Show
+                       , initialWindowValueListeners :: ValueListeners }
+
+data HWTWidgetContext = HWTWidgetContext { widgetServerValues :: SessionMap
+                                         , widgetClientValues :: SessionMap
+                                         , widgetWindowValues :: SessionMap } deriving Show
 
 data ConstructorCall = ConstructorCall { referenceName :: String
-                                       , constructorCall :: HWTPageReload String }
+                                       , constructorCall :: String }
+
+type ConstructorCalls = HWTPageReload [ConstructorCall]
+
+renderConstructorCalls :: ConstructorCalls -> HWTPageReload String
+renderConstructorCalls ccs = do
+  ccs' <- ccs
+  return $ concat $ map (\cc -> "var " ++ (referenceName cc) ++ " = " ++ (constructorCall cc) ++ ";\n") ccs'
 
 instance Show ConstructorCall where
   show (ConstructorCall ref impl) = "var " ++ ref ++ " = XXX;"
 
 class HWTInitAccessibleValue a where
   getIntId :: a -> Int
-  getInitSessionMap :: a -> HWT SessionMap
+  getInitSessionMap :: (MonadHWT m) => a -> m SessionMap
   getInitListeners :: a -> HWT ValueListeners
   setInitListeners :: a -> ValueListeners -> HWT ()
 
-withInitSessionMap :: HWTInitAccessibleValue a => a -> (SessionMap -> HWT b) -> HWT b
-withInitSessionMap v f = do
-  sm <- getInitSessionMap v
-  f sm
-
-addListener :: HWTInitAccessibleValue v => v -> ValueListener -> HWT ()
-addListener v l = do
-  ls <- getInitListeners v
-  let
-    i = getIntId v
-    ls' = IM.unionWith mappend ls $ IM.singleton i [l]
-  setInitListeners v ls'
 
 instance HWTInitAccessibleValue (ServerValue a) where
   getIntId (HWTId i _) = i
-  getInitSessionMap _ = gets initialServerValues
+  getInitSessionMap _ = getWidgetContext >>= return . widgetServerValues
   getInitListeners _ = gets initialServerValueListeners
   setInitListeners _ ls = modify $ \ini -> ini{initialServerValueListeners=ls}
 
 instance HWTInitAccessibleValue (ClientValue a) where
   getIntId (HWTId i _) = i
-  getInitSessionMap _ = gets initialClientValues
+  getInitSessionMap _ = getWidgetContext >>= return . widgetClientValues
   getInitListeners _ = gets initialClientValueListeners
   setInitListeners _ ls = modify $ \ini -> ini{initialClientValueListeners=ls}
 
 instance HWTInitAccessibleValue (WindowValue a) where
   getIntId (HWTId i _) = i
-  getInitSessionMap _ = gets initialWindowValues
+  getInitSessionMap _ = getWidgetContext >>= return . widgetWindowValues
   getInitListeners _ = gets initialWindowValueListeners
   setInitListeners _ ls = modify $ \ini -> ini{initialWindowValueListeners=ls}
 
-data ValueListener = ValueListener{
-  listen :: HWTAction ()
+data ValueListener = ValueListener {
+  listen :: JSValue -> HWTAction ()
 }
 
 instance Show ValueListener where

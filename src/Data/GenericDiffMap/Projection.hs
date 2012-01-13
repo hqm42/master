@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE Arrows #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE FlexibleContexts #-}
 module Data.GenericDiffMap.Projection where
 
 import Data.Data
@@ -51,3 +52,15 @@ deriveNamedPs t namegen = do
 
 derivePs :: Name -> Q [Dec]
 derivePs t = deriveNamedPs t (\s -> Just $ s ++ "_p")
+
+-- some usefull projections
+
+head_p :: (Data [a]) => Projection [a] a
+head_p = pa head $ PS "foo" 0
+tail_p :: (Data [a]) => Projection [a] [a]
+tail_p = pa tail $ PS "foo" 1
+
+fst_p :: (Data (a,b)) => Projection (a,b) a
+fst_p = pa fst $ PS "foo" 0
+snd_p :: (Data (a,b)) => Projection (a,b) b
+snd_p = pa snd $ PS "foo" 1

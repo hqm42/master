@@ -40,7 +40,6 @@ import qualified Control.Monad.State as MS
 import qualified Control.Monad.Identity as MI
 import qualified Control.Monad.Writer as MW
 import Control.Monad.Error as ME
-import Data.Maybe (fromJust)
 import Data.Monoid
 import Control.Monad (when,liftM3)
 import Data.Algorithm.Diff
@@ -142,14 +141,18 @@ lookup i dm@GDMap{dynMap = m, stopRule = sr, fromG = from} = case M.lookup (gRef
             return $ lookup' (Ref x) dm
   Nothing -> Nothing
 
-lookup' i dm = fromJust $ lookup i dm
+lookup' i dm = case lookup i dm of
+  Nothing -> error "lookup': not found"
+  Just x -> x
 
 supplyArg :: (Monad m, Data b) => LookupHandler m -> GDMap g g' -> MS.StateT [GRef] m b
 supplyArg look dm = do 
   (x:xs) <- MS.get
   MS.put xs
   xM <- handleLookup (Ref x) (\i' x' gdv' -> MS.lift $ look i' x' gdv') dm
-  return $ fromJust $ xM
+  return $ case xM of
+    Nothing -> error "supplyArg: not found"
+    Just x -> x
 
 handleLookup :: (Monad m, Data a) => Ref a -> LookupHandler m -> GDMap g g' -> m (Maybe a)
 handleLookup i look dm@GDMap{dynMap = m, stopRule = sr, fromG = from} = case M.lookup (gRef i) m of
@@ -187,18 +190,24 @@ deserialize gi gx m = MI.runIdentity (handleDeserialize gi gx upd ins del m)
     del = \_ -> return ()
 
 handleDeserialize :: Monad m => GRef -> g' -> UpdateHandler m -> InsertHandler m -> DeleteHandler m -> GDMap g g' -> m (GDMap g g')
-handleDeserialize gi gx upd ins del m@GDMap{dynMap=dm} = case fromJust $ M.lookup gi dm of
-  Primitive{deserializePrimitive=d} -> d gx upd m
-  Complex{deserializeComplex=d} -> d gx upd ins del m
+handleDeserialize gi gx upd ins del m@GDMap{dynMap=dm} = case M.lookup gi dm of
+  Nothing -> error "handleDeserialize: not found"
+  Just dv -> case dv of
+    Primitive{deserializePrimitive=d} -> d gx upd m
+    Complex{deserializeComplex=d} -> d gx upd ins del m
 
 ser :: Data a => (Ref a) -> GDMap g g' -> g'
 ser i m = (toG' m) $ lookup' i m
 
 desP :: (Data a,Monad m') => Ref a ->  g' -> UpdateHandler m' -> GDMap g g' -> m' (GDMap g g')
-desP i x upd m = handleUpdate i (fromJust $ (fromG' m) x) upd undefined undefined m
+desP i x upd m = handleUpdate i (case (fromG' m) x of
+                                   Nothing -> error $ "desP: not found"
+                                   Just x' -> x') upd undefined undefined m
 
 desC :: (Data a,Monad m') => Ref a -> g' -> UpdateHandler m' -> InsertHandler m' -> DeleteHandler m' -> GDMap g g' -> m' (GDMap g g')
-desC i x upd ins del m = handleUpdate i (fromJust $ (fromG' m) x) upd ins del m 
+desC i x upd ins del m = handleUpdate i (case (fromG' m) x of
+                                           Nothing -> error "desC: not found"
+                                           Just x' -> x') upd ins del m 
 
 handleUpdate :: (Monad m, Data a) 
               => Ref a
@@ -232,16 +241,24 @@ handleUpdate' i x' update insert delete = do
     MS.put m{dynMap=M.insert gi Primitive{ primitive=to x'
                                          , serializePrimitive=ser i
                                          , deserializePrimitive=desP i} dm}
-  else if toConstr x' == constr (fromJust $ M.lookup gi dm) then do
+  else if toConstr x' == constr (case M.lookup gi dm of
+                                   Nothing -> error "handelUpdate' 1: not found"
+                                   Just x'' -> x'') then do
     res <- MS.execStateT (sequence $ gmapQ (\y' -> do
                     (yr:yrs) <- MS.get
                     MS.lift $ handleUpdate' (Ref yr) y' update insert delete
-                    MS.put yrs) x') (childRefs $ fromJust $ M.lookup gi dm)
+                    MS.put yrs) x') (childRefs $ case M.lookup gi dm of
+                                   Nothing -> error "handelUpdate' 2: not found"
+                                   Just x'' -> x'')
     return ()
   else do
-    mapM_ (\c -> handleDelete' c delete) (childRefs $ fromJust $ M.lookup gi dm)
+    mapM_ (\c -> handleDelete' c delete) (childRefs $ case M.lookup gi dm of
+                                   Nothing -> error "handelUpdate' 3: not found"
+                                   Just x'' -> x'')
     handleInsertI' i x' insert
-    Complex{constr=c, childRefs=cs} <- MS.gets (fromJust . M.lookup gi . dynMap)
+    Complex{constr=c, childRefs=cs} <- MS.gets (\s -> case M.lookup gi $ dynMap s of
+                                                        Nothing -> error "handleUpdate' 4: not found"
+                                                        Just comp -> comp)
     MS.lift $ update i x x' (GDComplex (show c) cs)
     return ()
 
@@ -264,11 +281,15 @@ handleInsert' x insert = do
     newRef = Ref i
   MS.modify (\m -> m{nextId=i+1})
   cs <- handleInsertI' newRef x insert
-  gdv' <- MS.gets $ fromJust . M.lookup i . dynMap
+  gdv' <- MS.gets $ \s -> case M.lookup i $ dynMap s of
+                            Nothing -> error "handelInsert' 1: not found"
+                            Just gdv' -> gdv'
   from <- MS.gets $ fromG
   let
     gdv = case gdv' of
-            Primitive{primitive=x} -> GDPrimitive $ fromJust . from $ x
+            Primitive{primitive=x} -> GDPrimitive $ case from $ x of
+                                                      Nothing -> error "handelInsert' 2: not found"
+                                                      Just p -> p
             Complex{constr=c,childRefs=cs}-> GDComplex (show c) cs
   MS.lift $ insert newRef x gdv
   return $ gRef newRef : cs
@@ -320,7 +341,9 @@ handleDelete' gi delete = do
   m <- MS.get
   let
     dm = dynMap m
-    dv = fromJust $ M.lookup gi dm
+    dv = case M.lookup gi dm of
+           Nothing -> error "handleDelete': not found"
+           Just dv -> dv
   MS.put m{dynMap = M.delete gi dm}
   case dv of
     Primitive{} -> return ()
@@ -331,4 +354,6 @@ projection :: (Data a, Data b) => Projection a b -> Ref a -> GDMap g g' -> Ref b
 projection pa i m = res
   where
     path = execP pa
-    res = Ref $ foldl (\i' (PS _ ci) -> (childRefs $ fromJust $ M.lookup i' (dynMap m)) !! ci) (gRef i) path
+    res = Ref $ foldl (\i' (PS _ ci) -> (childRefs $ case M.lookup i' (dynMap m) of
+                                                       Nothing -> error $ "projection: not found"
+                                                       Just x -> x) !! ci) (gRef i) path

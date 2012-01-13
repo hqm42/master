@@ -64,7 +64,7 @@ runHWTApp :: Int -> HWT Element -> IO ()
 runHWTApp port app = do
   let
     ini = runState app newHWTInit
-  putStrLn $ show ini
+  -- putStrLn $ show ini
   as <- newApplicationState ini
   waiApp <- toWaiApp as
   run port waiApp
@@ -148,7 +148,8 @@ getUpdatesR = do
     changed = JSObject $ JSONObject $ M.toList $ changedValues upsS
     removed = toJSON $ removedValues upsS
     ups' = [("new",new),("changed",changed),("removed",removed)]
-  return $ RepJson $ toContent $ render $ pp_object ups'
+    json = render $ pp_object ups'
+  return $ RepJson $ toContent json
 
 runAction :: HWTWindow -> HWTAction () -> IO SessionUpdates
 runAction win a = atomically $ runReaderT (execWriterT a) win
@@ -159,7 +160,9 @@ postValueChangedR someId = do
   win <- window
   postData <- lift consume
   let
-    newContent = toJSON $ L.unpack $ L.fromChunks postData
+    newContent = case decode $ L.unpack $ L.fromChunks postData of
+      Ok c -> c
+      Error s -> error s
     setValue' = case toHWTId someId :: (Maybe (ServerValue ())) of
       Just sv -> do
         deserializeValue sv newContent
@@ -224,16 +227,11 @@ getFullPageReloadR = do
     prContext = HWTPageReloadContext svs cvs
     (root,constrs) = applicationInit as
     pollingHandler = "var pollingHandler = new hwt.PollingHandler(" ++ show wk ++ ");\n"
-    ccalls = concat $ map (\cc -> runReader (renderConstructorCall cc) prContext) constrs
+    ccalls = concat $ map (\cc -> runReader (renderConstructorCalls cc) prContext) constrs
     insertRootNode = "document.body.appendChild(" ++ show root ++ ".domNode);\n"
     startPolling = "pollingHandler.poll();"
     jsDyn = pollingHandler ++ ccalls ++ insertRootNode ++ startPolling
   return $ RepHtml $ toContent $ defaultJSApp jsDyn
-
-renderConstructorCall :: ConstructorCall -> HWTPageReload String
-renderConstructorCall cc = do
-  impl <- constructorCall cc
-  return $ "var " ++ (referenceName cc) ++ " = " ++ impl ++ ";\n"
 
 keys :: Handler (SessionKey,WindowKey)
 keys = do
@@ -309,8 +307,7 @@ test0 = runHWTApp 8080 $ do
   v1 <- windowValue ("Hallo Welt" :: String)
   v2 <- clientValue ("" :: String)
 
-  valueListener v1 $ do
-    v1content <- getValue v1
+  valueListener v1 $ \v1content ->  do
     setValue v2 $ reverse v1content
 
   mRW <- readWriteModel v1
@@ -319,7 +316,7 @@ test0 = runHWTApp 8080 $ do
   mR <- readModel v2
   l <- label mR
 
-  panel [t,l]
+  panel [t,l] Nothing Nothing 
 
 test1 :: IO ()
 test1 = runHWTApp 8080 $ do
@@ -336,15 +333,50 @@ test1 = runHWTApp 8080 $ do
     modifyValue windowClicks (+1)
     modifyValue sessionClicks (+1)
     modifyValue serverClicks (+1)
+  wl <- labelC ("windowclicks:" :: String)
   l1 <- label m2
+
+  cl <- labelC ("clientclicks:" :: String)
   l2 <- label m3
+
+  sl <- labelC ("serverclicks" :: String)
   l3 <- label m4
-  panel [b1,l1,l2,l3]
+  panel [b1,wl,l1,cl,l2,sl,l3] Nothing Nothing 
 
 test2 :: IO ()
 test2 = runHWTApp 8080 $ do
-  lv <- windowValue ["eins" :: String,"zwei","drei"]
-  lm <- readModel lv
-  list lm label
+  lv <- serverValue [1,2,3]
+  next <- serverValue (4 :: Int)
+  bl1 <- constModel ("WENIGER!" :: String)
+  bl2 <- constModel ("MEHR!" :: String)
+  b1 <- button bl1 $ do
+    modifyValue lv $ \nn -> case nn of
+      [] -> []
+      (_:t) -> t
+  b2 <- button bl2 $ do
+    n <- getValue next
+    modifyValue lv (++[n])
+    setValue next $ n+1
+  l <- list lv $ \v -> do
+    m <- readModel v
+    l1 <- label m
+    l2 <- labelC (" == " :: String)
+    l3 <- label m
+    panel [l1,l2,l3] Nothing Nothing
+  panel [b1,b2,l] Nothing Nothing 
+
+test3 :: IO ()
+test3 = runHWTApp 8080 $ do
+  vt <- transientValue ("" :: String)
+  mt <- readWriteModel vt
+  vs <- serverValue ("" :: String)
+  ms <- readModel vs
+  t <- textfield mt
+  l <- label ms
+  bl <- constModel ("->" :: String)
+  b <- submitButton bl vt $ \ text -> do
+    setValue vs text
+  panel [t,b,l] Nothing Nothing
+
 
 main = test2

@@ -48,7 +48,7 @@ defaultStopRule :: forall a . Data a => a -> Bool
 defaultStopRule = const False
 
 jsonStopRule :: forall a . Data a => a -> Bool
-jsonStopRule x = not (isAlgType dtx) || (tx == typeOf "")
+jsonStopRule x = not (isAlgType dtx) || (tx == typeOf "") || (tx == typeOf True)
   where
     dtx = dataTypeOf x
     tx = typeOf x
@@ -60,8 +60,8 @@ newDynmicGDMap :: GDMap Dynamic Dynamic
 newDynmicGDMap = newGDMap2 defaultStopRule toDyn fromDynamic
 
 -- uses Dynmics for persistence and JSON for serialisation
-newJSONGDMap :: GDMap Dynamic JSValue
-newJSONGDMap = newGDMap jsonStopRule toDyn fromDynamic toJSON fromJSON'
+newJSONGDMap :: GDMap JSValue JSValue
+newJSONGDMap = newGDMap jsonStopRule toJSON fromJSON' toJSON fromJSON'
   where
     fromJSON' x = case fromJSON x of
                     Ok x -> Just x

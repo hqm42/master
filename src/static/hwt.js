@@ -3,6 +3,7 @@ goog.require('goog.dom');
 goog.require('goog.events');
 goog.require('goog.array');
 goog.require('goog.style');
+goog.require('goog.json');
 
 goog.provide('hwt.TransientValue');
 goog.provide('hwt.Value');
@@ -21,11 +22,28 @@ pollingInterval = 0;
 
 // dlh
 
-function copyTo(valueTo) {
-  return function(valueFrom) {
-    valueTo.set(valueFrom.get());
+function getAllValues(all,cons,valueMap) {
+  all.push(cons);
+  if (cons.content.childRefs && cons.content.childRefs.length == 2) {
+    getAllValues(all,valueMap[cons.content.childRefs[1]],valueMap);
   };
 };
+
+function newValueById(ph,name,content) {
+  var sw = function(prefix) {return name.search(prefix) == 0;};
+  if (sw("vS")) {
+    return new hwt.ServerValue(ph,content,name);
+  } else if (sw("vC") || sw("vW")) {
+    return new hwt.Value(ph,content,name);
+  } else if (sw("vT")) {
+    return new hwt.TransientValue(ph,content,name);
+  }  else {
+    alert("unknown value type: " + name);
+    return null;
+  }
+}
+
+// end dlh
 
 hwt.PollingHandler = function(windowKey) {
   this.windowKey = windowKey;
@@ -34,9 +52,15 @@ hwt.PollingHandler = function(windowKey) {
 hwt.PollingHandler.prototype.poll = function() {
   var that = this;
   this.handleUpdates(function(updates) {
+    for (persistentName in updates.new) {
+      that.values[persistentName] = newValueById(that,persistentName,updates.new[persistentName]);
+    };
     for (persistentName in updates.changed) {
       that.values[persistentName].init(updates.changed[persistentName]);
     };
+    for (persistentName in updates.removed) {
+      delete that.values[persistentName]
+    }
     window.setTimeout(function() {that.poll()},pollingInterval);
   });
 }
@@ -62,7 +86,10 @@ hwt.PollingHandler.prototype.set = function(persistentName,content) {
     var xhr = e.target;
     var t = xhr.getResponseText();
     //alert(t);
-  },'POST',content);
+  },'POST',goog.json.serialize(content));
+};
+hwt.PollingHandler.prototype.getValue = function(name) {
+  return this.values[name];
 };
 
 hwt.TransientValue = function(pollingHandler,content,transientName) {
@@ -96,6 +123,14 @@ hwt.ServerValue = function(pollingHandler,content,persistentName) {
 goog.inherits(hwt.ServerValue,hwt.Value);
 hwt.ServerValue.prototype.set = function(){alert('Setting ServerValues is not permitted!');};
 
+hwt.project = function(valueMap,startValue,steps) {
+  var v = startValue;
+  for (var i in steps) {
+    v = valueMap[v.get().childRefs[steps[i]]];
+  }
+  return v;
+};
+
 hwt.Model = function() {
   this.slots = new Array();
 };
@@ -123,6 +158,26 @@ hwt.ModelmRW = function(value) {
 goog.inherits(hwt.ModelmRW,hwt.ModelmR);
 hwt.ModelmRW.prototype.set = function(content) {
   this.value.set(content);
+};
+
+hwt.ListModelmR = function(listRootValue) {
+  hwt.Model.call(this);
+  var all = new Array();
+  getAllValues(all,listRootValue,listRootValue.pollingHandler.values);
+  var that = this;
+  all.forEach(function(value) {value.models.push(that)})
+  this.listRoot = listRootValue;
+};
+goog.inherits(hwt.ListModelmR,hwt.Model);
+hwt.ListModelmR.prototype.get = function() {
+  var res = new Array();
+  var that = this;
+  getAllValues(res,this.listRoot,this.listRoot.pollingHandler.values);
+  res.forEach(function(value){
+    var i = value.models.indexOf(that);
+    if (i == -1) value.models.push(that);
+  });
+  return res;
 };
 
 hwt.NegateModel = function(model) {
@@ -186,12 +241,13 @@ hwt.HideableWidget = function(getHiddenParent,visibleModel) {
   };
 };
 
-hwt.ContainerWidget = function(getBodyNode,widgets) {
-  this.subWidgets = widgets;
+hwt.ContainerWidget = function(getBodyNode,getSubWidgets) {
+  goog.dom.removeChildren(getBodyNode());
+  this.subWidgets = getSubWidgets();
   this.subWidgets.forEach(function(subWidget) {
     goog.dom.appendChild(getBodyNode(),subWidget.domNode);
   });
-}
+};
 
 hwt.widgets.Label = function(textModel,opt_classModel) {
   hwt.Widget.call(this,goog.dom.createDom('span'));
@@ -246,6 +302,24 @@ hwt.widgets.Panel = function(opt_visibleModel,opt_classModel,var_subWidgets) {
   hwt.Widget.call(this,goog.dom.createDom('div'));
   hwt.ClassWidget.call(this,this.getRootNode,opt_classModel);
   hwt.HideableWidget.call(this,this.getRootNode,opt_visibleModel);
-  hwt.ContainerWidget.call(this,this.getRootNode,var_subWidgets);
+  hwt.ContainerWidget.call(this,this.getRootNode,function(){return var_subWidgets});
 };
 goog.inherits(hwt.widgets.Panel,hwt.Widget);
+
+hwt.widgets.List = function(listModel,subWidget) {
+  hwt.Widget.call(this,goog.dom.createDom('div'));
+  var rebuildSubWidgets = function(){
+    var ccs = listModel.get();
+    ccs.pop(); // delete last cell []
+    var res = new Array();
+    ccs.forEach(function(value){
+      var elem = value.pollingHandler.values[value.content.childRefs[0]]
+      res.push(new subWidget(elem))})
+    return res};
+  hwt.ContainerWidget.call(this,this.getRootNode,rebuildSubWidgets);
+  var that = this;
+  listModel.addSlot(function(){
+      hwt.ContainerWidget.call(that,that.getRootNode,rebuildSubWidgets);
+    });
+};
+goog.inherits(hwt.widgets.List,hwt.Widget);
