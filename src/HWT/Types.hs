@@ -30,7 +30,7 @@ import Control.Concurrent.AdvSTM
 import Control.Concurrent.AdvSTM.TVar
 import Yesod.Static
 
-data HWTId a b = HWTId Int (Maybe b) deriving (Eq,Ord)
+data HWTId a b = HWTId Int (Maybe b) deriving (Eq,Ord,Typeable,Data)
 
 newtype SessionKey = SK String deriving (Eq,Ord,Show)
 newtype WindowKey = WK String deriving (Eq,Ord,Show)
@@ -45,14 +45,18 @@ class Monad m => MonadHWT m where
   addConstructorCalls :: ConstructorCalls -> m ()
   newHWTId :: Maybe b -> m (HWTId a b)
   getWidgetContext :: m HWTWidgetContext
+
+class Monad m => ProjectionMonadHWT m where
   projection :: ( Data a
                 , Data b
                 , HWTInitAccessibleValue (Value a loc)
+                , HWTActionAccessibleValueLocation loc
                 , HWTPrefix (Value a loc)
                 , HWTPrefix (Value b loc))
              => GDM.Projection a b
              -> Value a loc
              -> m (Value b loc)
+
 
 -- conversions
 value2Ref :: Value a at -> GDM.Ref a
@@ -102,16 +106,16 @@ type Element = HWTId ElementTag ()
 type Listener = HWTId ListenerTag ()
 
 -- Tags
-data ValueTag
+data ValueTag = ValueTag deriving (Typeable,Data)
 data ModelTag
 data ElementTag
 data ListenerTag
 
 -- Locations
-data ServerLocation
-data ClientLocation
+data ServerLocation = ServerLocation deriving (Typeable,Data)
+data ClientLocation = ClientLocation deriving (Typeable,Data)
+data WindowLocation = WindowLocation deriving (Typeable,Data)
 data TransientLocation
-data WindowLocation
 
 class ModelReadableLocation loc
 instance ModelReadableLocation ServerLocation

@@ -353,7 +353,10 @@ handleDelete' gi delete = do
 projection :: (Data a, Data b) => Projection a b -> Ref a -> GDMap g g' -> Ref b
 projection pa i m = res
   where
-    path = execP pa
+    x = case lookup i m of
+      Nothing -> error "projection failed 'projection'"
+      Just x -> x
+    (_,path) = runP pa x
     res = Ref $ foldl (\i' (PS _ ci) -> (childRefs $ case M.lookup i' (dynMap m) of
                                                        Nothing -> error $ "projection: not found"
                                                        Just x -> x) !! ci) (gRef i) path

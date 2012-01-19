@@ -18,6 +18,7 @@ import Text.JSON.Generic
 import Text.JSON.Pretty
 import qualified Data.IntMap as IM
 import qualified Data.String.Utils as SU
+import Control.Concurrent.AdvSTM.TVar
 
 instance MonadHWT HWT where
   addConstructorCalls cc =
@@ -35,6 +36,8 @@ instance MonadHWT HWT where
     return $ HWTWidgetContext{ widgetServerValues=svs
                              , widgetClientValues=cvs
                              , widgetWindowValues=wvs}
+
+instance ProjectionMonadHWT HWT where
   projection p v = do
     v' <- withInitSessionMap v $ 
       \sm -> return $ ref2Value $ GDM.projection p (value2Ref v) sm
@@ -51,6 +54,8 @@ instance MonadHWT HWTWidget where
     put $ i + 1
     return $ HWTId i meta
   getWidgetContext = ask
+
+instance ProjectionMonadHWT HWTWidget where
   projection p v = do
     v' <- newHWTId Nothing
     let
@@ -58,6 +63,13 @@ instance MonadHWT HWTWidget where
       impl = "new hwt.project(pollingHandler.values," ++ show v ++ ",goog.array.concat(" ++ steps ++ "))"
     addConstructorCallConst (show v') impl
     return v'
+
+instance ProjectionMonadHWT HWTAction where
+  projection p v = withSessionMap v $ \smT -> do
+    sm <- readTVar smT
+    let
+      r' = GDM.projection p (value2Ref v) sm
+    return $ ref2Value r'
 
 withInitSessionMap :: ( MonadHWT m
                       , HWTInitAccessibleValue a)
@@ -195,9 +207,9 @@ readModel :: ( ModelReadableLocation loc
           -> m (ReadModel a loc)
 readModel v = withNewHWTId (Just v) model'
 
-readWriteModel :: (ModelReadableWriteableLocation loc, HWTPrefix (Value a loc), Data a)
+readWriteModel :: (ModelReadableWriteableLocation loc, HWTPrefix (Value a loc), Data a, MonadHWT m)
                => Value a loc
-               -> HWT (ReadWriteModel a loc)
+               -> m (ReadWriteModel a loc)
 readWriteModel v = withNewHWTId (Just v) model'
 
 writeModel :: (ModelWriteableLocation loc, HWTPrefix (Value a loc), Data a)
@@ -221,6 +233,14 @@ negateModel :: ( ModelReadableLocation loc
 negateModel rm = withNewHWTId Nothing $ \i -> do
   addConstructorCallConst (show i) $ "new hwt.NegateModel(" ++ show rm ++ ")"
 
+eqModel :: ( MonadHWT m
+           , HWTPrefix (Model a at1 loc1)
+           , HWTPrefix (Model a at2 loc2))
+        => Model a at1 loc1 -> Model a at2 loc2 -> m (ReadModel Bool loc1)
+eqModel m1 m2 = do
+  withNewHWTId Nothing $ \i -> do
+  addConstructorCallConst (show i) $ "new hwt.EqualsModel(" ++ show m1 ++ "," ++ show m2 ++ ")"
+
 label :: MonadHWT m => ReadModel a loc -> m Element
 label m = newElement $ \i -> do
   let
@@ -232,7 +252,7 @@ labelC x = do
   m <- constModel x
   label m
 
-textfield :: ReadWriteModel a loc -> HWT Element
+textfield :: MonadHWT m => ReadWriteModel a loc -> m Element
 textfield m = newElement $ \i -> do
   let
     impl = "new hwt.widgets.TextField(" ++ show m ++ ", null, null)"
@@ -261,7 +281,7 @@ copyButton m from to = newElement $ \i -> addConstructorCallConst (show i) impl
     impl = "new hwt.widgets.Button(" ++ show m 
       ++ ",function(){" ++ show to ++ ".set(" ++ show from ++ ".get());},null)"
 
-submitButton :: (Data a, Monoid a) => ReadModel a loc -> TransientValue a -> (a -> HWTAction ()) -> HWT Element
+submitButton :: (Data a, Data b, Monoid b) => ReadModel a loc -> TransientValue b -> (b -> HWTAction ()) -> HWT Element
 submitButton m tv a = do
   actionHandlerValue <- windowValue mempty
   valueListener actionHandlerValue a

@@ -192,8 +192,22 @@ hwt.NegateModel = function(model) {
   model.addSlot(function() {
     that.notify()
   });
-}
+};
 goog.inherits(hwt.NegateModel,hwt.Model);
+
+hwt.EqualsModel = function(m1,m2) {
+  hwt.Model.call(this);
+  var that = this;
+  this.get = function() {
+    return m1.get() == m2.get();
+  };
+  var slot = function() {
+    that.notify();
+  };
+  m1.addSlot(slot);
+  m2.addSlot(slot);
+};
+goog.inherits(hwt.EqualsModel,hwt.Model);
 
 hwt.Widget = function(domNode) {
   this.domNode = domNode;
