@@ -42,7 +42,6 @@ import qualified Control.Monad.Writer as MW
 import Control.Monad.Error as ME
 import Data.Monoid
 import Control.Monad (when,liftM3)
-import Data.Algorithm.Diff
 
 import Data.GenericDiffMap.Projection
 

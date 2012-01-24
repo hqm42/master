@@ -1,0 +1,28 @@
+Name:                genericdiffmap
+Version:             0.1.0
+Synopsis:            Generic Diff Map
+License:             AllRightsReserved
+License-file:        LICENSE
+Author:              Robert Steuck <robert.steuck@gmail.com>
+Maintainer:          Robert Steuck <robert.steuck@gmail.com>
+Category:            Data
+Stability:           experimental
+Build-type:          Simple
+
+Cabal-version:       >=1.2
+
+Library
+  Exposed-modules:   Data.GenericDiffMap
+                     Data.GenericDiffMap.Projection
+  other-modules:     Data.GenericDiffMap.Core
+  default-language:  Haskell2010
+  Build-depends:     base,
+                     mtl,
+                     containers,
+                     syb,
+                     json,
+                     template-haskell
+                     
+source-repository head
+    type:      git
+    location:  git://github.com/hqm42/master.git

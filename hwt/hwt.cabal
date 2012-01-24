@@ -1,0 +1,41 @@
+Name:                hwt
+Version:             0.1.0
+Synopsis:            HWT
+License:             AllRightsReserved
+License-file:        LICENSE
+Author:              Robert Steuck <robert.steuck@gmail.com>
+Maintainer:          Robert Steuck <robert.steuck@gmail.com>
+Category:            Web
+Stability:           experimental
+Build-type:          Simple
+
+Cabal-version:       >=1.2
+
+Library
+  Exposed-modules:   HWT.Core
+                     HWT.Types
+                     HWT.Session
+                     HWT.Server
+                     HWT.Tests
+  default-language:  Haskell2010
+  Build-depends:     base,
+                     mtl,
+                     json,
+                     containers,
+                     MissingH,
+                     stm-io-hooks,
+                     yesod-static,
+                     enumerator,
+                     bytestring,
+                     text,
+                     random,
+                     warp,
+                     wai,
+                     yesod,
+                     haskell98,
+
+                     genericdiffmap
+
+source-repository head
+    type:      git
+    location:  git://github.com/hqm42/master.git
