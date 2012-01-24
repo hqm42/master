@@ -3,4 +3,7 @@ svn checkout http://closure-library.googlecode.com/svn/trunk/ hwt/static/closure
 cd ./genericdiffmap
 cabal install
 cd ../hwt
+cabal build
 runhaskell HWT.Tests
+
+-> localhost:8080
