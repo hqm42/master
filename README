@@ -1,4 +1,6 @@
-cabal install yesod MissingH
+svn checkout http://closure-library.googlecode.com/svn/trunk/ hwt/static/closure-library
 
-runhaskell Hallo.hs
-localhost:8080
+cd ./genericdiffmap
+cabal install
+cd ../hwt
+runhaskell HWT.Tests
