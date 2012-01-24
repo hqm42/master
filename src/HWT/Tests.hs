@@ -125,8 +125,12 @@ newUser = U { name = "" }
 
 drn = "default"
 
+fil _ [] = []
+fil p (x:xs) | p x = x : fil p xs
+             | otherwise = xs
+
 quitroom :: User -> String -> [(String,Room)] -> [(String,Room)]
-quitroom u rn (room@(rn',r) : rs) | rn == rn' = (rn,r{users=filter (/= u) $ users r}) : rs
+quitroom u rn (room@(rn',r) : rs) | rn == rn' = (rn,r{users=fil (/= u) $ users r}) : rs
                                   | otherwise = room : quitroom u rn rs
 quitroom _ _ [] = []
 
