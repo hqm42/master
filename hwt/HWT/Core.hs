@@ -225,32 +225,34 @@ constModel x = do
   tv <- transientValue x
   readModel tv
 
-negateModel :: ( ModelReadableLocation loc
+negateModel :: ( HasModel ms Bool loc
+               , ModelReadableLocation loc
                , HWTPrefix (ReadModel Bool loc)
                , MonadHWT m )
-            => ReadModel Bool loc
+            => ms
             -> m (ReadModel Bool loc)
-negateModel rm = withNewHWTId Nothing $ \i -> do
+negateModel ms = withNewHWTId Nothing $ \i -> do
+  rm <- getReadModel ms
   addConstructorCallConst (show i) $ "new hwt.NegateModel(" ++ show rm ++ ")"
 
 eqModel :: ( MonadHWT m
-           , HWTPrefix (Model a at1 loc1)
-           , HWTPrefix (Model a at2 loc2))
-        => Model a at1 loc1 -> Model a at2 loc2 -> m (ReadModel Bool loc1)
-eqModel m1 m2 = do
+           , HasModel ms1 a loc1
+           , HasModel ms2 a loc2
+           , HWTPrefix (ReadModel a loc1)
+           , HWTPrefix (ReadModel a loc2))
+        => ms1 -> ms2 -> m (ReadModel Bool loc1)
+eqModel ms1 ms2 = do
   withNewHWTId Nothing $ \i -> do
+  m1 <- getReadModel ms1
+  m2 <- getReadModel ms2
   addConstructorCallConst (show i) $ "new hwt.EqualsModel(" ++ show m1 ++ "," ++ show m2 ++ ")"
 
-label :: MonadHWT m => ReadModel a loc -> m Element
+label :: (MonadHWT m, HasModel ms a loc) => ms -> m Element
 label m = newElement $ \i -> do
+  m' <- getReadModel m
   let
-    impl = "new hwt.widgets.Label(" ++ (show m) ++ ")"
+    impl = "new hwt.widgets.Label(" ++ (show m') ++ ")"
   addConstructorCallConst (show i) impl
-
-labelC :: (Data a, MonadHWT m) => a -> m Element
-labelC x = do
-  m <- constModel x
-  label m
 
 textfield :: MonadHWT m => ReadWriteModel a loc -> m Element
 textfield m = newElement $ \i -> do
@@ -258,36 +260,49 @@ textfield m = newElement $ \i -> do
     impl = "new hwt.widgets.TextField(" ++ show m ++ ", null, null)"
   addConstructorCallConst (show i) impl
 
-panel :: MonadHWT m => [Element] -> Maybe (ReadModel Bool loc) -> Maybe (ReadModel String loc) -> m Element
+textfieldT :: (MonadHWT m) => String -> m (Element,TransientValue String)
+textfieldT t = do
+  tv <- transientValue t
+  m <- readWriteModel tv
+  t <- textfield m
+  return (t,tv)
+
+panel :: ( MonadHWT m
+         , HasModel ms1 Bool loc1
+         , HasModel ms2 String loc2)
+      => [Element] -> ms1 -> ms2 -> m Element
 panel es vis cls = newElement $ \i -> do
+  visM <- getReadModel vis
+  clsM <- getReadModel cls
   let
-    impl = "new hwt.widgets.Panel(" ++ optModel vis ++ "," ++ optModel cls ++ ",goog.array.concat(" ++ SU.join "," (map show es) ++ "))"
+    impl = "new hwt.widgets.Panel(" ++ show visM ++ "," ++ show clsM ++ ",goog.array.concat(" ++ SU.join "," (map show es) ++ "))"
   addConstructorCallConst (show i) impl
 
-optModel :: HWTPrefix (Model a at loc) => Maybe (Model a at loc) -> String
-optModel Nothing = "null"
-optModel (Just m) = show m
-
+panel' es = panel es True "" 
 
 copyButton :: ( MonadHWT m
               , HWTPrefix (Value b loc1)
-              , HWTPrefix (Value b loc2))
-           => ReadModel a loc
+              , HWTPrefix (Value b loc2)
+              , HasModel ms a loc)
+           => ms
            -> Value b loc1
            -> Value b loc2
            -> m Element
-copyButton m from to = newElement $ \i -> addConstructorCallConst (show i) impl
-  where
-    impl = "new hwt.widgets.Button(" ++ show m 
+copyButton m from to = newElement $ \i -> do
+  m' <- getReadModel m
+  let
+    impl = "new hwt.widgets.Button(" ++ show m'
       ++ ",function(){" ++ show to ++ ".set(" ++ show from ++ ".get());},null)"
+  addConstructorCallConst (show i) impl
 
-submitButton :: (Data a, Data b, Monoid b) => ReadModel a loc -> TransientValue b -> (b -> HWTAction ()) -> HWT Element
+submitButton :: (Data a, Data b, Monoid b, HasModel ms a loc)
+             => ms -> TransientValue b -> (b -> HWTAction ()) -> HWT Element
 submitButton m tv a = do
   actionHandlerValue <- windowValue mempty
   valueListener actionHandlerValue a
   copyButton m tv actionHandlerValue
 
-button :: ReadModel a loc -> (HWTAction ()) -> HWT Element
+button :: HasModel ms a loc => ms -> (HWTAction ()) -> HWT Element
 button m action = do
   actionHandlerValue <- windowValue 0
   actionValue <- transientValue 1
@@ -323,3 +338,35 @@ valueListener :: ( HWTInitAccessibleValue (Value a loc)
               -> HWT Listener
 valueListener v a = withNewHWTId Nothing $ \i -> do
   addListener v (ValueListener (a . (\(Ok x) -> x) . fromJSON))
+
+instance HasModel (ReadModel a loc) a loc where
+  getReadModel m = return m
+
+instance ( ModelReadableLocation loc
+         , HWTPrefix (Value a loc)
+         , Data a)
+        => HasModel (Value a loc) a loc where
+  getReadModel = readModel
+
+instance HasModel String String TransientLocation where
+  getReadModel = constModel
+
+instance HasModel Bool Bool TransientLocation where
+  getReadModel = constModel
+
+setValueIn :: ( HWTPrefix (Value a loc)
+              , HWTPrefix (Value b loc)
+              , Data a
+              , Data b
+              , HWTActionAccessibleValueLocation loc
+              , HWTActionSetableValueLocation loc
+              , HWTInitAccessibleValue (Value a loc)
+              , HWTInitAccessibleValue (Value b loc)
+              )
+           => Value a loc
+           -> Projection a b
+           -> b
+           -> HWTAction ()
+setValueIn v p x = do
+  v' <- projection p v
+  setValue v' x

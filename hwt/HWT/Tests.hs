@@ -4,106 +4,100 @@
 
 module HWT.Tests where
 
-import Control.Monad.State
-import Control.Monad.Reader
-import Control.Monad.Writer hiding (listen)
-import Control.Concurrent.AdvSTM
-import Control.Concurrent.AdvSTM.TVar
-import Control.Concurrent.AdvSTM.TMVar
-import Data.Monoid
-import Data.Maybe
+import Control.Monad (when,(>=>))
 import Data.Data
-import qualified Data.IntMap as IM
 import List (sort)
 
 import Data.GenericDiffMap.Projection
 import HWT.Types
 import HWT.Core
 import HWT.Session
-import HWT.Server hiding (main)
+import HWT.Server
 
--- type HWTAction = WriterT SessionUpdates (ReaderT HWTSession AdvSTM)
+-- TESTS
 
-test :: HWT Element -> IO ()
-test = runHWTApp 8080
+test0 :: IO ()
+test0 = runHWTApp 8080 $ do
+  v1 <- windowValue ("Hallo Welt" :: String)
+  v2 <- clientValue ("" :: String)
+
+  valueListener v1 $ \v1content ->  do
+    setValue v2 $ reverse v1content
+
+  mRW <- readWriteModel v1
+  t <- textfield mRW
+
+  mR <- readModel v2
+  l <- label mR
+
+  panel [t,l] True ("" :: String) 
+
+test1 :: IO ()
+test1 = runHWTApp 8080 $ do
+  v1 <- windowValue ("Hallo Welt" :: String)
+  windowClicks <- windowValue (0 :: Integer)
+  sessionClicks <- clientValue (0 :: Integer)
+  serverClicks <- serverValue (0 :: Integer)
+  m1 <- readModel v1
+  m2 <- readModel windowClicks
+  m3 <- readModel sessionClicks
+  m4 <- readModel serverClicks
+  b1 <- button m1 $ do
+    modifyValue v1 reverse
+    modifyValue windowClicks (+1)
+    modifyValue sessionClicks (+1)
+    modifyValue serverClicks (+1)
+  wl <- label ("windowclicks:" :: String)
+  l1 <- label m2
+
+  cl <- label ("clientclicks:" :: String)
+  l2 <- label m3
+
+  sl <- label ("serverclicks" :: String)
+  l3 <- label m4
+  panel [b1,wl,l1,cl,l2,sl,l3] True ("" :: String) 
+
+test2 :: IO ()
+test2 = runHWTApp 8080 $ do
+  lv <- serverValue [1,2,3]
+  next <- serverValue (4 :: Int)
+  bl1 <- constModel ("WENIGER!" :: String)
+  bl2 <- constModel ("MEHR!" :: String)
+  b1 <- button bl1 $ do
+    modifyValue lv $ \nn -> case nn of
+      [] -> []
+      (_:t) -> t
+  b2 <- button bl2 $ do
+    n <- getValue next
+    modifyValue lv (++[n])
+    setValue next $ n+1
+  l <- list lv $ \v -> do
+    m <- readModel v
+    l1 <- label m
+    l2 <- label (" == " :: String)
+    l3 <- label m
+    panel [l1,l2,l3] True ("" :: String)
+  panel [b1,b2,l] True ("" :: String)
+
+test3 :: IO ()
+test3 = runHWTApp 8080 $ do
+  vt <- transientValue ("" :: String)
+  mt <- readWriteModel vt
+  vs <- serverValue ("" :: String)
+  ms <- readModel vs
+  t <- textfield mt
+  l <- label ms
+  bl <- constModel ("->" :: String)
+  b <- submitButton bl vt $ \ text -> do
+    setValue vs text
+  panel [t,b,l] True ("" :: String)
+
+-- huge chat example
 
 assoc :: (Eq a) => a -> b -> [(a,b)] -> [(a,b)]
 assoc key val [] = [(key,val)]
 assoc key val (p@(key',_):xs) | key == key' = (key,val):xs
                               | otherwise = p:(assoc key val xs)
-
-toggleModels :: ( HWTPrefix (Value Bool loc)
-                , ModelReadableLocation loc )
-             => Value Bool loc
-             -> HWT (ReadModel Bool loc, ReadModel Bool loc)
-toggleModels bv = do
-  idModel <- readModel bv
-  notModel <- negateModel idModel
-  return (idModel,notModel)
-
-panel' es = panel es Nothing Nothing 
-
-buttonC :: String -> HWTAction () -> HWT Element
-buttonC t action = do
-  m <- constModel t
-  button m action
-
-submitButtonC :: ( Data a
-                 , Monoid a )
-              => String
-              -> TransientValue a
-              -> (a -> HWTAction ())
-              -> HWT Element
-submitButtonC l tv action = do
-  m <- constModel l
-  submitButton m tv action
-
-copyButtonC :: ( MonadHWT m
-              , HWTPrefix (Value b loc1)
-              , HWTPrefix (Value b loc2))
-           => String
-           -> Value b loc1
-           -> Value b loc2
-           -> m Element
-copyButtonC t from to = do
-  m <- constModel t
-  copyButton m from to
-
-labelCP :: (MonadHWT m) => String -> m Element
-labelCP t = do
-  l <- labelC t
-  panel' [l]
-
-setValueIn :: ( HWTPrefix (Value a loc)
-              , HWTPrefix (Value b loc)
-              , Data a
-              , Data b
-              , HWTActionAccessibleValueLocation loc
-              , HWTActionSetableValueLocation loc
-              , HWTInitAccessibleValue (Value a loc)
-              , HWTInitAccessibleValue (Value b loc)
-              )
-           => Value a loc
-           -> Projection a b
-           -> b
-           -> HWTAction ()
-setValueIn v p x = do
-  v' <- projection p v
-  setValue v' x
-
-negateModelV :: ( ModelReadableLocation loc
-                , HWTPrefix (Value Bool loc) )
-             => Value Bool loc -> HWT (ReadModel Bool loc)
-negateModelV bv = do
-  (_,nm) <- toggleModels bv
-  return nm
-
-textfieldT :: (MonadHWT m) => String -> m (Element,TransientValue String)
-textfieldT t = do
-  tv <- transientValue t
-  m <- readWriteModel tv
-  t <- textfield m
-  return (t,tv)
 
 data User = U { name :: String } deriving (Eq,Ord,Show,Typeable,Data)
 data Room = R { roomname :: String
@@ -116,14 +110,13 @@ $(derivePs ''ChatApp)
 $(derivePs ''Room)
 $(derivePs ''User)
 
+drn = "default"
 newChatApp = C { rooms = [newRoom drn] }
 newRoom n = (n, R { roomname = n
                   , users = []
                   , chatlog = []
                   , msgCount = 0})
 newUser = U { name = "" }
-
-drn = "default"
 
 fil _ [] = []
 fil p (x:xs) | p x = x : fil p xs
@@ -154,11 +147,10 @@ postmsg u msg rn rm = case lookup rn rm of
 cleanChat :: HWT Element
 cleanChat = do
   loginVisibleV <- clientValue True
-  chatVisibleM <- negateModelV loginVisibleV
+  chatVisibleM <- negateModel loginVisibleV
   chatAppV <- serverValue newChatApp
   currentRoomnameV <- windowValue drn
   nextRoomnameV <- windowValue drn
-  currentRoomnameM <- readModel currentRoomnameV
   userV <- clientValue newUser
   usernameV <- projection name_p userV
   loginP <- loginPanel chatAppV userV loginVisibleV
@@ -178,79 +170,75 @@ cleanChat = do
     roomname <- getValue currentRoomnameV
     modifyValue roomsV (postmsg user msg roomname)
     setValue msgTV ""
-
   chatList <- list roomsV $ \roomV' -> do
     roomV <- projection snd_p roomV'
-    roomPanel roomV userV msgTV currentRoomnameM msgDrainV
+    roomPanel roomV userV msgTV currentRoomnameV msgDrainV
   roomsP <- roomsPanel roomsV nextRoomnameV
-  chatP <- panel [chatList,roomsP] (Just chatVisibleM) Nothing
-  panel [loginP,chatP] Nothing Nothing
+  chatP <- panel [chatList,roomsP] chatVisibleM "chatPanel"
+  panel [loginP,chatP] True "root"
 
 loginPanel :: ServerValue ChatApp -> ClientValue User -> ClientValue Bool -> HWT Element
 loginPanel appV userCV visibleCV = do
   (usernameT,usernameTV) <- textfieldT ""
-  joinChatB <- submitButtonC "<- that's my name" usernameTV $ \username -> when (username /= "") $ do
+  joinChatB <- submitButton "<- that's my name" usernameTV $ \username -> when (username /= "") $ do
     setValueIn userCV name_p username
     setValue usernameTV ""
     setValue visibleCV False
     user <- getValue userCV
     roomsV <- projection rooms_p appV
     modifyValue roomsV (joinroom user drn)
-  visibleM <- readModel visibleCV
-  panel [usernameT,joinChatB] (Just visibleM) Nothing
+  panel [usernameT,joinChatB] visibleCV "loginPanel"
 
-roomPanel :: (MonadHWT m, ProjectionMonadHWT m) => ServerValue Room -> ClientValue User -> TransientValue String -> ReadModel String loc1 -> WindowValue String -> m Element
-roomPanel roomV userCV msgTV currentRoomM msgDrainV = do
-  thisRoomDescriptionL <- labelC "Current room: "
+roomPanel :: (MonadHWT m, ProjectionMonadHWT m) => ServerValue Room -> ClientValue User -> TransientValue String -> WindowValue String -> WindowValue String -> m Element
+roomPanel roomV userCV msgTV currentRoomV msgDrainV = do
+  thisRoomDescriptionL <- label "Current room: "
   roomnameV <- projection roomname_p roomV
-  thisRoomNameM <- readModel roomnameV
-  thisRoomNameL <- label thisRoomNameM
+  thisRoomNameL <- label roomnameV
   chatlogV <- projection chatlog_p roomV
   usersV <- projection users_p roomV
   chatlogList <- list chatlogV $ \msgUsrV -> do
     msgV <- projection snd_p msgUsrV
     usrNameV <- projection (fst_p >=> name_p) msgUsrV
-    msgM <- readModel msgV
-    msgL <- label msgM
-    unM <- readModel usrNameV
-    unL <- label unM
-    space <- labelC ": "
-    panel' [unL,space,msgL]
+    msgL <- label msgV
+    unL <- label usrNameV
+    space <- label ": "
+    panel [unL,space,msgL] True "msg"
   msgP <- messagePanel msgTV msgDrainV
   userList <- list usersV $ \userV -> do
     usernameV <- projection name_p userV
-    userM <- readModel usernameV
-    ul <- label userM
-    panel' [ul]
-  roomUsersL <- labelCP "Users in this room:"
-  visibleM <- eqModel currentRoomM thisRoomNameM
+    ul <- label usernameV
+    panel [ul] True "user"
+  roomUsersL' <- label "Users in this room:"
+  roomUsersL <- panel' [roomUsersL']
+  visibleM <- eqModel currentRoomV roomnameV
   panel [ thisRoomDescriptionL
         , thisRoomNameL
         , chatlogList
         , msgP
         , roomUsersL 
         , userList
-        ] (Just visibleM) Nothing
+        ] visibleM "room"
 
 roomsPanel :: ServerValue [(String,Room)] -> WindowValue String -> HWT Element
 roomsPanel roomsV nextRoomnameV = do
   roomsList <- list roomsV $ \roomV -> do
     thisRoomnameV <- projection fst_p roomV
-    thisRoomnameM <- readModel thisRoomnameV
-    thisRoomnameL <- label thisRoomnameM
-    joinB <- copyButtonC "join" thisRoomnameV nextRoomnameV
-    panel' [thisRoomnameL,joinB]
+    thisRoomnameL <- label thisRoomnameV
+    joinB <- copyButton "join" thisRoomnameV nextRoomnameV
+    msgcL <- projection (snd_p >=> msgCount_p) roomV >>= label
+    panel [thisRoomnameL,joinB,msgcL] True "joinRoom"
   (newRoomnameT,newRoomnameTV) <- textfieldT ""
-  joinB <- copyButtonC "create new room" newRoomnameTV nextRoomnameV
-  newRoomP <- panel' [newRoomnameT,joinB]
-  allRoomsL <- labelCP "All rooms:"
-  panel' [allRoomsL,roomsList,newRoomP]
+  joinB <- copyButton "create new room" newRoomnameTV nextRoomnameV
+  newRoomP <- panel [newRoomnameT,joinB] True "newRoom"
+  allRoomsL' <- label "All rooms:"
+  allRoomsL <- panel' [allRoomsL']
+  panel [allRoomsL,roomsList,newRoomP] True "roomsPanel"
 
 messagePanel :: MonadHWT m => TransientValue String -> WindowValue String -> m Element
 messagePanel msgTV msgDrainV = do
   msgM <- readWriteModel msgTV
   msgT <- textfield msgM
-  sendB <- copyButtonC "send" msgTV msgDrainV
+  sendB <- copyButton "send" msgTV msgDrainV
   panel' [msgT,sendB]
 
-main = test cleanChat
+main = runHWTApp 8080 cleanChat

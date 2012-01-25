@@ -349,3 +349,8 @@ instance Show ValueListener where
   show _ = "ValueListener"
 
 type ValueListeners = IM.IntMap [ValueListener]
+
+-- Model Typeclass
+
+class HasModel t a loc | t -> a loc where
+  getReadModel :: (MonadHWT m) => t -> m (ReadModel a loc)
