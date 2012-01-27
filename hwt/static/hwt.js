@@ -302,9 +302,10 @@ hwt.widgets.Checkbox = function(checkedModel,opt_disabledModel) {
 };
 goog.inherits(hwt.widgets.Checkbox,hwt.Widget);
 
-hwt.widgets.Button = function(textModel,action,opt_disabledModel) {
+hwt.widgets.Button = function(textModel,action,opt_disabledModel,opt_classModel) {
   hwt.Widget.call(this,goog.dom.createDom('button'));
   hwt.DisableableWidget.call(this,this.getRootNode,opt_disabledModel);
+  hwt.ClassWidget.call(this,this.getRootNode,opt_classModel);
   hwt.TextContentWidget.call(this,this.getRootNode,textModel);
   goog.events.listen(this.domNode,goog.events.EventType.CLICK,function(){
     action();
@@ -320,8 +321,10 @@ hwt.widgets.Panel = function(opt_visibleModel,opt_classModel,var_subWidgets) {
 };
 goog.inherits(hwt.widgets.Panel,hwt.Widget);
 
-hwt.widgets.List = function(listModel,subWidget) {
+hwt.widgets.List = function(listModel,subWidget,opt_visibleModel,opt_classModel) {
   hwt.Widget.call(this,goog.dom.createDom('div'));
+  hwt.ClassWidget.call(this,this.getRootNode,opt_classModel);
+  hwt.HideableWidget.call(this,this.getRootNode,opt_visibleModel);
   var rebuildSubWidgets = function(){
     var ccs = listModel.get();
     ccs.pop(); // delete last cell []
@@ -337,3 +340,25 @@ hwt.widgets.List = function(listModel,subWidget) {
     });
 };
 goog.inherits(hwt.widgets.List,hwt.Widget);
+
+hwt.Stylesheet = function loadjscssfile(title,filename) {
+  var link = goog.dom.createDom('link');
+  this.link = link;
+  this.title = title;
+  link.setAttribute("rel", "stylesheet");
+  link.setAttribute("type", "text/css");
+  link.setAttribute("href", filename);
+  link.setAttribute("disabled", true);
+  link.setAttribute("title",title);
+  document.getElementsByTagName("head")[0].appendChild(link);
+  this.enable();
+};
+hwt.Stylesheet.prototype.enable = function() {
+  var links = goog.dom.getElementsByTagNameAndClass('link');
+  var that = this;
+  goog.array.toArray(links).forEach(function(link){
+    if (link.getAttribute("rel").indexOf("style") != -1) {
+      link.disabled = link.getAttribute("title") != that.title
+    }
+  });
+};

@@ -105,11 +105,14 @@ type Element = HWTId ElementTag ()
 
 type Listener = HWTId ListenerTag ()
 
+type Style = HWTId StyleTag ()
+
 -- Tags
 data ValueTag = ValueTag deriving (Typeable,Data)
 data ModelTag
 data ElementTag
 data ListenerTag
+data StyleTag
 
 -- Locations
 data ServerLocation = ServerLocation deriving (Typeable,Data)
@@ -191,6 +194,9 @@ instance HWTPrefix (ReadWriteModel a loc) where
 
 instance HWTPrefix (Element) where
   getPrefix _ = "e"
+
+instance HWTPrefix (Style) where
+  getPrefix _ = "s"
 
 
 instance HWTPrefix a => HWTPrefix (a,b) where
