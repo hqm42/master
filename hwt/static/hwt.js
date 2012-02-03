@@ -322,7 +322,7 @@ hwt.widgets.Panel = function(opt_visibleModel,opt_classModel,var_subWidgets) {
 goog.inherits(hwt.widgets.Panel,hwt.Widget);
 
 hwt.widgets.List = function(listModel,subWidget,opt_visibleModel,opt_classModel) {
-  hwt.Widget.call(this,goog.dom.createDom('div'));
+  hwt.Widget.call(this,goog.dom.createDom('ul'));
   hwt.ClassWidget.call(this,this.getRootNode,opt_classModel);
   hwt.HideableWidget.call(this,this.getRootNode,opt_visibleModel);
   var rebuildSubWidgets = function(){
@@ -330,8 +330,8 @@ hwt.widgets.List = function(listModel,subWidget,opt_visibleModel,opt_classModel)
     ccs.pop(); // delete last cell []
     var res = new Array();
     ccs.forEach(function(value){
-      var elem = value.pollingHandler.values[value.content.childRefs[0]]
-      res.push(new subWidget(elem))})
+      var elem = value.pollingHandler.values[value.content.childRefs[0]];
+      res.push(new hwt.widgets.LiWrapper(new subWidget(elem)))});
     return res};
   hwt.ContainerWidget.call(this,this.getRootNode,rebuildSubWidgets);
   var that = this;
@@ -340,6 +340,12 @@ hwt.widgets.List = function(listModel,subWidget,opt_visibleModel,opt_classModel)
     });
 };
 goog.inherits(hwt.widgets.List,hwt.Widget);
+
+hwt.widgets.LiWrapper = function(widget) {
+  hwt.Widget.call(this,goog.dom.createDom('li'));
+  goog.dom.appendChild(this.getRootNode(),widget.domNode);
+};
+goog.inherits(hwt.widgets.LiWrapper,hwt.Widget);
 
 hwt.Stylesheet = function loadjscssfile(title,filename) {
   var link = goog.dom.createDom('link');
