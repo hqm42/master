@@ -212,9 +212,9 @@ defaultJSApp :: String -> String
 defaultJSApp jsDyn = "<html>\n<head>\n"
           ++ "<script src='static/closure-library/closure/goog/base.js'></script>"
           ++ "<script src='static/hwt.js'></script>"
-          ++ "<script type=\"text/javascript\">\nfunction initHWT() {\n"
+          ++ "<script type=\"text/javascript\">\nfunction initHWT(bodyElement) {\n"
           ++ jsDyn
-          ++ "\n};\n</script>\n</head>\n<body onload=\"initHWT()\">\n</body>\n</html>"
+          ++ "\n};\n</script>\n</head>\n<body onload=\"initHWT(this.document.body)\">\n</body>\n</html>"
 
 getFullPageReloadR :: Handler RepHtml
 getFullPageReloadR = do
@@ -228,7 +228,7 @@ getFullPageReloadR = do
     (root,constrs) = applicationInit as
     pollingHandler = "var pollingHandler = new hwt.PollingHandler(" ++ show wk ++ ");\n"
     ccalls = concat $ map (\cc -> runReader (renderConstructorCalls cc) prContext) constrs
-    insertRootNode = "document.body.appendChild(" ++ show root ++ ".domNode);\n"
+    insertRootNode = "bodyElement.appendChild(" ++ show root ++ ".domNode);\n"
     startPolling = "pollingHandler.poll();"
     jsDyn = pollingHandler ++ ccalls ++ insertRootNode ++ startPolling
   return $ RepHtml $ toContent $ defaultJSApp jsDyn

@@ -7,6 +7,9 @@ module HWT.Tests where
 import Control.Monad (when,(>=>))
 import Data.Data
 import List (sort)
+import System.Cmd.Utils
+import Control.Concurrent.AdvSTM
+import Control.Concurrent.AdvSTM.TMVar
 
 import Data.GenericDiffMap.Projection
 import HWT.Types
@@ -16,77 +19,22 @@ import HWT.Server
 
 -- TESTS
 
-test0 :: IO ()
-test0 = runHWTApp 8080 $ do
-  v1 <- windowValue ("Hallo Welt" :: String)
-  v2 <- clientValue ("" :: String)
+-- hello world
 
-  valueListener v1 $ \v1content ->  do
-    setValue v2 $ reverse v1content
+helloWorld = runHWTApp 8080 (label "Hello World!")
 
-  mRW <- readWriteModel v1
-  t <- textfield' mRW
+-- fortune
 
-  l <- label v2
-
-  panel [t,l] True ("" :: String) 
-
-test1 :: IO ()
-test1 = runHWTApp 8080 $ do
-  windowClicks <- windowValue (0 :: Integer)
-  sessionClicks <- clientValue (0 :: Integer)
-  serverClicks <- serverValue (0 :: Integer)
-  m2 <- readModel windowClicks
-  m3 <- readModel sessionClicks
-  m4 <- readModel serverClicks
-  b1 <- button "Hallo Welt" (do
-    modifyValue windowClicks (+1)
-    modifyValue sessionClicks (+1)
-    modifyValue serverClicks (+1)) False ""
-  wl <- label ("windowclicks:" :: String)
-  l1 <- label m2
-
-  cl <- label ("clientclicks:" :: String)
-  l2 <- label m3
-
-  sl <- label ("serverclicks" :: String)
-  l3 <- label m4
-  panel [b1,wl,l1,cl,l2,sl,l3] True ("" :: String) 
-
-test2 :: IO ()
-test2 = runHWTApp 8080 $ do
-  lv <- serverValue [1,2,3]
-  next <- serverValue (4 :: Int)
-  bl1 <- constModel ("WENIGER!" :: String)
-  bl2 <- constModel ("MEHR!" :: String)
-  b1 <- button bl1 (do
-    modifyValue lv $ \nn -> case nn of
-      [] -> []
-      (_:t) -> t) False ""
-  b2 <- button bl2 (do
-    n <- getValue next
-    modifyValue lv (++[n])
-    setValue next $ n+1) False ""
-  l <- list' lv $ \v -> do
-    m <- readModel v
-    l1 <- label m
-    l2 <- label (" == " :: String)
-    l3 <- label m
-    panel [l1,l2,l3] True ("" :: String)
-  panel [b1,b2,l] True ("" :: String)
-
-test3 :: IO ()
-test3 = runHWTApp 8080 $ do
-  vt <- transientValue ("" :: String)
-  mt <- readWriteModel vt
-  vs <- serverValue ("" :: String)
-  ms <- readModel vs
-  t <- textfield' mt
-  l <- label ms
-  bl <- constModel ("->" :: String)
-  b <- submitButton bl vt (\ text -> do
-    setValue vs text) False ""
-  panel [t,b,l] True ("" :: String)
+fortune = runHWTApp 8080 $ do
+  fortuneValue <- windowValue ""
+  fortuneLabel <- label fortuneValue
+  moreFortuen <- button "more!" (do
+    newFortune <- unsafeIOToSTM $ (do
+      (pid, fortune) <- pipeFrom "fortune" []
+      forceSuccess pid
+      return fortune)
+    setValue fortuneValue newFortune) False ""
+  panel [moreFortuen, fortuneLabel] True ""
 
 -- huge chat example
 
@@ -140,8 +88,8 @@ postmsg u msg rn rm = case lookup rn rm of
   Just r@R{chatlog=cl,msgCount=msgc} -> assoc rn r{ chatlog=take 20 $ (u,msg) : cl
                                                   , msgCount=msgc+1} rm
 
-chat :: HWT Element
-chat = do
+chat :: IO ()
+chat = runHWTApp 8080 $ do
   addCSS "foo.css"
   loginVisibleV <- clientValue True
   chatVisibleM <- negateModel loginVisibleV
@@ -238,4 +186,4 @@ messagePanel msgTV msgDrainV = do
   sendB <- copyButton "send" msgTV msgDrainV False ""
   panel' [msgT,sendB]
 
-main = runHWTApp 8080 chat
+main = fortune

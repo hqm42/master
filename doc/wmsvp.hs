@@ -10,26 +10,23 @@ import Data.IORef
 -- datatypes + typeclasses
 
 type Ref = IORef
-data Content = Content
-data Label = forall a. Show a => Label (Ref a)
-data Slot a = Slot (IO ())
-data Model a b = Model (Ref [Listener]) (Source a) (a -> b)
+
 data Value a = Value (Ref a) (Ref [Listener])
+data Model a b = Model (Ref [Listener]) (Source a) (a -> b)
+newtype Slot a = Slot (IO ())
+data Label = forall a. Show a => Label (Ref a)
 
 class IsWidget w where
   renderWidget :: w -> IO String
-
 data Widget = forall a. IsWidget a => Widget a
 
 class IsListener l where
   notify :: l -> IO ()
-
 data Listener = forall a. IsListener a => Listener a
 
 class IsSource s a | s -> a where
   getContent :: s -> IO a
   addListener :: IsListener l => s -> l -> IO ()
-
 data Source a = forall b. IsSource b a => Source b
 
 -- Implementation
@@ -40,7 +37,7 @@ instance IsWidget Widget where
 instance IsWidget Label where
   renderWidget (Label r) = do
     content <- readIORef r
-    return $ "[Label: " ++ show content ++ "]"
+    return ("[Label: " ++ show content ++ "]")
 
 instance IsListener (Slot a) where
   notify (Slot doIt) = doIt
@@ -52,24 +49,26 @@ instance IsListener (Model a b) where
 
 instance IsSource (Value a) a where
   getContent (Value r ls) = readIORef r
-  addListener (Value r ls) listener = modifyIORef ls (Listener listener:)
+  addListener (Value r ls) listener =
+    modifyIORef ls (Listener listener:)
 
 instance IsSource (Model a b) b where
   getContent (Model ls (Source source) f) = do
     c' <- getContent source
-    return $ f c'
+    return (f c')
   addListener (Model ls s f) listener = do
     modifyIORef ls (Listener listener:)
     notify listener
 
-instance (IsSource s1 a, IsSource s2 b) => IsSource (s1,s2) (a,b) where
-  getContent (s1,s2) = do
-    c1 <- getContent s1
-    c2 <- getContent s2
-    return (c1,c2)
-  addListener (s1,s2) listener = do
-    addListener s1 listener
-    addListener s2 listener
+instance (IsSource s1 a, IsSource s2 b)
+  => IsSource (s1,s2) (a,b) where
+    getContent (s1,s2) = do
+      c1 <- getContent s1
+      c2 <- getContent s2
+      return (c1,c2)
+    addListener (s1,s2) listener = do
+      addListener s1 listener
+      addListener s2 listener
 
 -- values
 
@@ -77,7 +76,7 @@ value :: a -> IO (Value a)
 value x = do
   ls <- newIORef []
   r <- newIORef x
-  return $ Value r ls
+  return (Value r ls)
 
 setContent :: Value a -> a -> IO ()
 setContent (Value r ls) x' = do
@@ -117,21 +116,22 @@ notModel :: IsSource s Bool => s -> IO (Model Bool Bool)
 notModel s = model s not
 
 pigLatin :: String -> String
-pigLatin s = unwords $ map pigLatin' $ words s
+pigLatin s = unwords (map pigLatin' (words s))
   where
     pigLatin' w@(f:r) = if any (== f) "aeiouAEIUO"
     then w ++ "ay"
     else r ++ [f] ++ "ay"
 
-pigLatinModel :: IsSource s String => s -> IO (Model String String)
+pigLatinModel :: IsSource s String
+              => s -> IO (Model String String)
 pigLatinModel source = model source pigLatin
 
 -- slots
 
 copySlot :: Model a b -> Ref b -> Slot b
-copySlot model ref = Slot $ do
+copySlot model ref = Slot (do
   content <- getContent model
-  writeIORef ref content
+  writeIORef ref content)
 
 
 -- basic label widget
@@ -139,8 +139,8 @@ copySlot model ref = Slot $ do
 label :: (Show b) => Model a b -> IO Widget
 label model = do
   textRef <- newIORef undefined
-  addListener model $ copySlot model textRef
-  return $ Widget $ Label textRef
+  addListener model (copySlot model textRef)
+  return (Widget (Label textRef))
 
 -- tests
 
@@ -168,11 +168,6 @@ test2 = do
   l <- label m
   debugWidget l
   setContent v1 False
-  debugWidget l
-  setContent v2 False
-  debugWidget l
-  setContent v1 True
-  setContent v2 True
   debugWidget l
 
 main = do

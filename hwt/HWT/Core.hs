@@ -260,7 +260,7 @@ label ms = newElement $ \i -> do
 textfield :: ( MonadHWT m
              , HasModel ms1 Bool loc2
              , HasModel ms2 String loc3 )
-          => ReadWriteModel a loc1
+          => ReadWriteModel String loc1
           -> ms1
           -> ms2
           -> m Element
@@ -271,7 +271,7 @@ textfield m dis cls = newElement $ \i -> do
     impl = unpack [stext|new hwt.widgets.TextField(#{show m}, #{show disM}, #{show clsM})|]
   addConstructorCallConst (show i) impl
 
-textfield' :: MonadHWT m => ReadWriteModel a loc -> m Element
+textfield' :: MonadHWT m => ReadWriteModel String loc -> m Element
 textfield' m = textfield m False ""
 
 textfieldT :: (MonadHWT m
