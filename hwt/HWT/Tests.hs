@@ -186,4 +186,4 @@ messagePanel msgTV msgDrainV = do
   sendB <- copyButton "send" msgTV msgDrainV False ""
   panel' [msgT,sendB]
 
-main = fortune
+main = chat
