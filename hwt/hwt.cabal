@@ -33,7 +33,7 @@ Library
                      wai,
                      yesod,
                      haskell98,
-
+                     shakespeare-text,
                      genericdiffmap
 
 source-repository head
